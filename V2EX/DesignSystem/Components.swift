@@ -1,0 +1,352 @@
+import SwiftUI
+
+// MARK: - Grouped card
+
+/// White card on warm paper. No shadow — at this contrast a shadow only muddies
+/// the edge, which is what made the old grey-on-grey layout look soft.
+struct CardSection<Content: View>: View {
+    var padding: CGFloat = 0
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) { content }
+            .padding(padding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.card)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Metric.cardRadius, style: .continuous))
+            .padding(.horizontal, Theme.Metric.screenPadding)
+    }
+}
+
+/// Caption above a card group. Sentence case, not uppercase — uppercased CJK
+/// does nothing but uppercased latin in a mixed line looks accidental.
+struct GroupHeader: View {
+    let title: String
+    var trailing: String?
+    var trailingAction: (() -> Void)?
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title)
+                .font(Type.label(12))
+                .foregroundStyle(Theme.muted)
+            Spacer()
+            if let trailing {
+                Button(trailing) { trailingAction?() }
+                    .font(Type.meta(13))
+                    .foregroundStyle(Theme.accent)
+            }
+        }
+        .padding(.horizontal, Theme.Metric.headerPadding)
+        .padding(.bottom, 8)
+    }
+}
+
+/// Hairline separator inset from the leading edge, as in the mockups.
+struct RowSeparator: View {
+    var leadingInset: CGFloat = 16
+
+    var body: some View {
+        Rectangle()
+            .fill(Theme.separator)
+            .frame(height: Theme.Metric.hairline)
+            .padding(.leading, leadingInset)
+    }
+}
+
+// MARK: - Node / avatar squares
+
+/// Rounded square avatar. Shows the remote image when there is one and falls
+/// back to the design's coloured initials square — which also stands in as the
+/// placeholder while loading, so lists never flash empty grey tiles.
+struct IdentitySquare: View {
+    let text: String
+    var size: CGFloat = 34
+    var imageURL: URL?
+    var color: Color?
+
+    private var initials: String {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        guard let first = trimmed.first else { return "?" }
+        // CJK reads better as a single glyph; latin names as two letters.
+        if first.unicodeScalars.first.map({ $0.value > 0x2E80 }) == true {
+            return String(first)
+        }
+        return String(trimmed.prefix(2)).lowercased()
+    }
+
+    var body: some View {
+        let fill = color ?? Theme.nodeColor(for: text)
+        let radius = size * 0.29
+
+        ZStack {
+            LinearGradient(
+                colors: [fill.opacity(0.92), fill],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            )
+            Text(initials)
+                .font(.system(size: size * 0.38, weight: .semibold))
+                .foregroundStyle(.white)
+                .minimumScaleFactor(0.6)
+                .lineLimit(1)
+            if let imageURL {
+                AsyncImage(url: imageURL, transaction: Transaction(animation: .easeOut(duration: 0.18))) { phase in
+                    if let image = phase.image {
+                        image.resizable().scaledToFill()
+                    } else {
+                        // Keep the initials tile visible on load failure too.
+                        Color.clear
+                    }
+                }
+                // Without an explicit frame AsyncImage lays out at the image's
+                // intrinsic size and the tile shows only a clipped corner.
+                .frame(width: size, height: size)
+                .clipped()
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                .strokeBorder(Theme.separator, lineWidth: 0.5)
+        }
+    }
+}
+
+/// Subtle press feedback for rows wrapped in a NavigationLink — `.plain`
+/// alone gives none, which is most of why a hand-built list feels inert.
+struct PressableRowStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(configuration.isPressed ? Theme.rowHighlight : Color.clear)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
+extension ButtonStyle where Self == PressableRowStyle {
+    static var row: PressableRowStyle { PressableRowStyle() }
+}
+
+// MARK: - Fixed screen header
+
+/// Title and actions on one row, per the design doc — half the height of a
+/// system large title stacked over a toolbar, and it never moves.
+///
+/// Pin it with `.safeAreaBar(edge: .top)` so scroll content passes under the
+/// system's own bar material instead of colliding with the header.
+struct ScreenHeader<Actions: View, Accessory: View>: View {
+    let title: String
+    @ViewBuilder var actions: Actions
+    /// Optional second row — chip rail, search field…
+    @ViewBuilder var accessory: Accessory
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
+                Text(title)
+                    .font(.system(size: 24, weight: .bold))
+                    .kerning(-0.6)
+                    .foregroundStyle(Theme.ink)
+                Spacer(minLength: 8)
+                actions
+            }
+            .padding(.horizontal, Theme.Metric.screenPadding)
+
+            accessory
+        }
+        .padding(.top, 6)
+        .padding(.bottom, 8)
+    }
+}
+
+extension ScreenHeader where Accessory == EmptyView {
+    init(title: String, @ViewBuilder actions: () -> Actions) {
+        self.init(title: title, actions: actions) { EmptyView() }
+    }
+}
+
+extension ScreenHeader where Actions == EmptyView, Accessory == EmptyView {
+    init(_ title: String) {
+        self.init(title: title) { EmptyView() } accessory: { EmptyView() }
+    }
+}
+
+/// 36pt circular Liquid Glass action button for the header row.
+struct GlassCircleButton<Content: View>: View {
+    var filled = false
+    var action: () -> Void
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        Button(action: action) {
+            content
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(filled ? Color.white : Theme.body)
+                .frame(width: 36, height: 36)
+        }
+        .buttonStyle(.plain)
+        .glassEffect(
+            filled ? .regular.tint(Theme.accent).interactive() : .regular.interactive(),
+            in: .circle
+        )
+    }
+}
+
+// MARK: - Chips
+
+/// Pill filter used for the home tabs, node sort order, notification scopes…
+struct FilterChip: View {
+    let title: String
+    let isSelected: Bool
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 14, weight: isSelected ? .semibold : .medium))
+                .foregroundStyle(isSelected ? Color.white : Theme.muted)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(isSelected ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(Theme.chipFill))
+                .clipShape(Capsule())
+                .animation(.snappy(duration: 0.2), value: isSelected)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Horizontal chip rail with the design's 8pt gutters.
+struct ChipRail<Item: Hashable, Label: View>: View {
+    let items: [Item]
+    @ViewBuilder var label: (Item) -> Label
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(items, id: \.self, content: label)
+            }
+            .padding(.horizontal, Theme.Metric.screenPadding)
+            .padding(.vertical, 8)
+        }
+        .scrollClipDisabled()
+    }
+}
+
+// MARK: - Glass
+
+// MARK: - Small parts
+
+/// "↓ 已离线" marker.
+struct OfflineBadge: View {
+    var body: some View {
+        Text("↓ 已离线")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(Theme.amber)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Theme.amberSoft, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+    }
+}
+
+struct Chevron: View {
+    var body: some View {
+        Image(systemName: "chevron.right")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(Theme.faint)
+    }
+}
+
+/// Settings-style row: coloured icon tile, title, optional subtitle/value, chevron.
+struct SettingsRow<Trailing: View>: View {
+    let icon: String
+    let iconColor: Color
+    let title: String
+    var subtitle: String?
+    @ViewBuilder var trailing: Trailing
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8, style: .continuous).fill(iconColor)
+                Image(systemName: icon)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+            .frame(width: 30, height: 30)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.system(size: 17))
+                    .kerning(-0.43)
+                    .foregroundStyle(Theme.ink)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.muted)
+                }
+            }
+            Spacer(minLength: 8)
+            trailing
+        }
+        .padding(.horizontal, 16)
+        .frame(minHeight: Theme.Metric.rowHeight)
+        .contentShape(Rectangle())
+    }
+}
+
+extension SettingsRow where Trailing == EmptyView {
+    init(icon: String, iconColor: Color, title: String, subtitle: String? = nil) {
+        self.init(icon: icon, iconColor: iconColor, title: title, subtitle: subtitle) { EmptyView() }
+    }
+}
+
+// MARK: - State views
+
+struct LoadingCard: View {
+    var body: some View {
+        CardSection(padding: 28) {
+            HStack {
+                Spacer()
+                ProgressView().tint(Theme.accent)
+                Spacer()
+            }
+        }
+    }
+}
+
+struct EmptyStateCard: View {
+    let icon: String
+    let title: String
+    var message: String?
+    var actionTitle: String?
+    var action: (() -> Void)?
+
+    var body: some View {
+        CardSection(padding: 24) {
+            VStack(spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 28, weight: .light))
+                    .foregroundStyle(Theme.faint)
+                Text(title)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Theme.ink)
+                if let message {
+                    Text(message)
+                        .font(.system(size: 14))
+                        .foregroundStyle(Theme.muted)
+                        .multilineTextAlignment(.center)
+                }
+                if let actionTitle, let action {
+                    Button(actionTitle, action: action)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 8)
+                        .background(Theme.accent, in: Capsule())
+                        .padding(.top, 2)
+                }
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+}

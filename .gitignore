@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+
+# Xcode
+DerivedData/
+build/
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+
+# 本项目：命令行构建产物
+.build-dd/
+
+# 本地测试文件
+/tmp/

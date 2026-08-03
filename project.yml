@@ -1,0 +1,35 @@
+name: V2EX
+options:
+  bundleIdPrefix: com.vibe
+  deploymentTarget:
+    # The design is explicitly iOS 26 Liquid Glass, so we target the real APIs
+    # (glassEffect, GlassEffectContainer, native floating tab bar) rather than
+    # approximating them with materials.
+    iOS: "26.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: false
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+
+targets:
+  V2EX:
+    type: application
+    platform: iOS
+    sources:
+      - path: V2EX
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.vibe.v2ex
+        PRODUCT_NAME: V2EX
+        INFOPLIST_FILE: V2EX/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_EMIT_LOC_STRINGS: YES
+        GENERATE_INFOPLIST_FILE: NO
