@@ -13,3 +13,6 @@ xcuserdata/
 
 # 本地测试文件
 /tmp/
+
+# 发布配置（含 Team/凭据路径，本地保留不入库）
+.ship.yml
