@@ -1,0 +1,75 @@
+name: iOS Unsigned Build
+
+# 无签名编译：仅验证工程可编译，不产生可安装到真机的签名包。
+# 真机安装/TestFlight 需要开发者证书，不在本 workflow 范围内。
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ios-unsigned-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (unsigned)
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 工程部署目标为 iOS 26.0，必须使用带 iOS 26 SDK 的 Xcode 26+
+      - name: Select latest Xcode
+        run: |
+          echo "Installed Xcode(s):"
+          ls /Applications | grep -E '^Xcode' || true
+          XCODE_APP=$(ls /Applications | grep -E '^Xcode(_[0-9.]+)?\.app$' | sort -V | tail -1)
+          echo "Using: /Applications/$XCODE_APP"
+          sudo xcode-select -s "/Applications/$XCODE_APP"
+          xcodebuild -version
+
+      - name: Show schemes
+        run: xcodebuild -project V2EX.xcodeproj -list
+
+      - name: Build for iOS Simulator (Debug, no signing)
+        run: |
+          xcodebuild -project V2EX.xcodeproj -scheme V2EX \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Build for iOS Device (Release, unsigned)
+        run: |
+          xcodebuild -project V2EX.xcodeproj -scheme V2EX \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Package app bundles
+        run: |
+          cd build/Build/Products
+          ditto -c -k --sequesterRsrc --keepParent "Debug-iphonesimulator/V2EX.app" V2EX-simulator.app.zip
+          ditto -c -k --sequesterRsrc --keepParent "Release-iphoneos/V2EX.app" V2EX-device-unsigned.app.zip
+          ls -lh
+
+      - name: Upload simulator build
+        uses: actions/upload-artifact@v4
+        with:
+          name: V2EX-simulator
+          path: build/Build/Products/V2EX-simulator.app.zip
+          if-no-files-found: error
+
+      - name: Upload unsigned device build
+        uses: actions/upload-artifact@v4
+        with:
+          name: V2EX-device-unsigned
+          path: build/Build/Products/V2EX-device-unsigned.app.zip
+          if-no-files-found: error
