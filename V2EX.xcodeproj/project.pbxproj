@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 54;
+	objectVersion = 77;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -28,6 +28,7 @@
 		BF282EF7599568F5946D286E /* Stores.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47C86804E76925BACA4F4F28 /* Stores.swift */; };
 		CC19FE500CF1C1A1BAA2F23D /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0E880B91771525AA6EC6C96 /* Models.swift */; };
 		D05BE0081792146B09364963 /* TopicViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEFC5A0489A2A4FC9463497B /* TopicViews.swift */; };
+		D4500E8A2F879942F6879F2C /* SandboxServer in Frameworks */ = {isa = PBXBuildFile; productRef = 99124CDD195DE8D1ACF5655F /* SandboxServer */; };
 		D908B48A4BF7276496007F6F /* NotificationsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87AF26D4D20B392C500B6CB1 /* NotificationsView.swift */; };
 		E15A101C5AB370F0B427E217 /* NodesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D4F99BD91F20BA14DD3F15E /* NodesView.swift */; };
 		E48BD3267CA53AE32AEFA8B0 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A431F0C4F1474F22EA17AC2 /* AppSettings.swift */; };
@@ -67,6 +68,17 @@
 		F278302FA3BE29B5FA2D3B3C /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		F281243AAC2B79B5C6223510 /* V2EX.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = V2EX.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		800A5977EA4BC9F4BC1A7C7F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D4500E8A2F879942F6879F2C /* SandboxServer in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		2104C64C9D4CD9A5B4F7953C /* Networking */ = {
@@ -241,12 +253,16 @@
 			buildPhases = (
 				83914ED0D9D605CFE13B04FE /* Sources */,
 				4709CB6CB11AEB5E30F97010 /* Resources */,
+				800A5977EA4BC9F4BC1A7C7F /* Frameworks */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 			);
 			name = V2EX;
+			packageProductDependencies = (
+				99124CDD195DE8D1ACF5655F /* SandboxServer */,
+			);
 			productName = V2EX;
 			productReference = F281243AAC2B79B5C6223510 /* V2EX.app */;
 			productType = "com.apple.product-type.application";
@@ -267,7 +283,6 @@
 				};
 			};
 			buildConfigurationList = 041257D16E829B6F6B6CFB14 /* Build configuration list for PBXProject "V2EX" */;
-			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -275,6 +290,12 @@
 				en,
 			);
 			mainGroup = B9384A5B3976F20C90917DE8;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				C833CEB7118CF881383F0736 /* XCRemoteSwiftPackageReference "SandboxServer" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = CC3AD1D6DC7D10F70901C772 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -520,6 +541,28 @@
 			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		C833CEB7118CF881383F0736 /* XCRemoteSwiftPackageReference "SandboxServer" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/xinghelee/SandboxServer.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.1.0;
+			};
+			traits = (
+				SandboxServerEnabled,
+			);
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		99124CDD195DE8D1ACF5655F /* SandboxServer */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C833CEB7118CF881383F0736 /* XCRemoteSwiftPackageReference "SandboxServer" */;
+			productName = SandboxServer;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 62811AEB71FA44D9A2F11C26 /* Project object */;
 }

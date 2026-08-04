@@ -9,6 +9,15 @@ options:
   createIntermediateGroups: true
   generateEmptyDirectories: false
 
+packages:
+  # DEBUG-only sandbox debugging SDK: network capture / file browser / SQLite /
+  # logs / MCP bridge. Release builds link a no-op facade, so this is safe.
+  SandboxServer:
+    url: https://github.com/xinghelee/SandboxServer.git
+    from: 0.1.0
+    traits:
+      - SandboxServerEnabled
+
 settings:
   base:
     SWIFT_VERSION: "5.0"
@@ -24,6 +33,9 @@ targets:
     platform: iOS
     sources:
       - path: V2EX
+    dependencies:
+      - package: SandboxServer
+        product: SandboxServer
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.vibe.v2ex
