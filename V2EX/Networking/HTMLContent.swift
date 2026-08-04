@@ -101,8 +101,7 @@ enum HTMLText {
                     blocks.append(.code(decode(strip(inner)).trimmingCharacters(in: .newlines)))
                 case "blockquote":
                     flushParagraph()
-                    let attributed = inline(inner)
-                    if !attributed.characters.isEmpty { blocks.append(.quote(attributed)) }
+                    blocks.append(contentsOf: quoteBlocks(from: inner))
                 case "ul", "ol":
                     flushParagraph()
                     let items = listItems(in: inner)
@@ -115,6 +114,15 @@ enum HTMLText {
                 case "hr":
                     flushParagraph()
                     blocks.append(.rule)
+                case "a" where inner.contains("<img"):
+                    // Linked image outside a <p> — promote it instead of letting
+                    // the inline pass collapse it into a "[图片]" link.
+                    flushParagraph()
+                    if let src = imageSource(in: inner), let url = absoluteURL(src) {
+                        blocks.append(.image(url))
+                    } else {
+                        pending += reassemble(name: name, attributes: attributes, inner: inner)
+                    }
                 case "br":
                     pending += "\n"
                 default:
@@ -126,6 +134,46 @@ enum HTMLText {
         }
         flushParagraph()
         return blocks
+    }
+
+    /// Quote blocks keep their text but promote any images out of the inline
+    /// pass (which would otherwise collapse `<img>` into a "[图片]" link).
+    private static func quoteBlocks(from html: String) -> [ContentBlock] {
+        var text = ""
+        var result: [ContentBlock] = []
+        var scanner = Scanner(source: html)
+
+        func flush() {
+            let attributed = inline(text)
+            if !attributed.characters.isEmpty { result.append(.quote(attributed)) }
+            text = ""
+        }
+
+        while let chunk = scanner.next() {
+            switch chunk {
+            case .text(let t):
+                text += t
+            case .element(let name, let attributes, let inner):
+                switch name {
+                case "img":
+                    if let src = attributes["src"], let url = absoluteURL(src) {
+                        flush()
+                        result.append(.image(url))
+                    }
+                case "a" where inner.contains("<img"):
+                    if let src = imageSource(in: inner), let url = absoluteURL(src) {
+                        flush()
+                        result.append(.image(url))
+                    } else {
+                        text += reassemble(name: name, attributes: attributes, inner: inner)
+                    }
+                default:
+                    text += reassemble(name: name, attributes: attributes, inner: inner)
+                }
+            }
+        }
+        flush()
+        return result
     }
 
     /// Inline-only parse: bold/italic/code/link runs, no block structure.
