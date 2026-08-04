@@ -5,9 +5,11 @@ final class ProfileViewModel: ObservableObject {
     @Published private(set) var member: V2Member?
     @Published private(set) var recentTopics: [V2Topic] = []
     @Published private(set) var isLoading = false
+    @Published private(set) var loadFailed = false
 
     func load(token: String) async {
         isLoading = true
+        loadFailed = false
         defer { isLoading = false }
 
         guard !token.isEmpty else {
@@ -15,9 +17,14 @@ final class ProfileViewModel: ObservableObject {
             recentTopics = []
             return
         }
-        member = try? await V2EXClient.shared.currentMember(token: token)
-        if let username = member?.username {
-            recentTopics = (try? await V2EXClient.shared.topics(byMember: username)) ?? []
+        do {
+            let fresh = try await V2EXClient.shared.currentMember(token: token)
+            member = fresh
+            recentTopics = (try? await V2EXClient.shared.topics(byMember: fresh.username)) ?? []
+        } catch {
+            // Keep whatever we already have — a transient failure (throttle,
+            // flaky network) must not look like the user signed out.
+            if member == nil { loadFailed = true }
         }
     }
 }
@@ -34,6 +41,17 @@ struct ProfileView: View {
             LazyVStack(alignment: .leading, spacing: 14) {
                 if token.hasToken, let member = model.member {
                     profileCard(member)
+                } else if token.hasToken, model.isLoading {
+                    LoadingCard()
+                } else if token.hasToken, model.loadFailed {
+                    EmptyStateCard(
+                        icon: "wifi.exclamationmark",
+                        title: "没能加载个人资料",
+                        message: "网络或接口暂时不可用，你的登录状态没有变，下拉或点重试即可。",
+                        actionTitle: "重试"
+                    ) {
+                        Task { await model.load(token: token.token) }
+                    }
                 } else {
                     signedOutCard
                 }
