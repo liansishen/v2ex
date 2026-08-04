@@ -87,7 +87,10 @@ final class TopicDetailViewModel: ObservableObject {
                 // it behind the 100-reply long-thread heuristic.
                 // 热门帖分页并行拉取（各页独立），再按 id 恢复时间顺序。
                 let total = topic?.replies ?? 0
-                let pageCount = min(12, max(1, Int(ceil(Double(total) / 100.0))))
+                // v2 replies 每页固定 20 条（实测 p=1 返回 20 条），不是 100 条。
+                // 按 100 算页数会把 >20 回复的帖子的最新评论丢在未请求的页里。
+                // 20 页 × 20 条 = 400 条封顶，覆盖绝大多数帖子。
+                let pageCount = min(20, max(1, Int(ceil(Double(total) / 20.0))))
                 var collected: [V2Reply] = []
                 try await withThrowingTaskGroup(of: [V2Reply].self) { group in
                     for page in 1...pageCount {

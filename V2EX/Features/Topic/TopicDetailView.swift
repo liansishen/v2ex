@@ -44,6 +44,9 @@ struct TopicDetailView: View {
                     .padding(.bottom, 110)
                 }
                 .scrollIndicators(.hidden)
+                .refreshable {
+                    await model.load(id: topicID, token: token.token, cookie: session.cookie, offline: offline)
+                }
                 .onChange(of: model.replies.count) { _, count in
                     guard settings.rememberReadingPosition, count > 0,
                           let floor = readState.position(for: topicID), floor > 1 else { return }

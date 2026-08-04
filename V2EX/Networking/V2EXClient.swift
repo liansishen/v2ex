@@ -301,7 +301,18 @@ actor V2EXClient {
             components.queryItems = query.map { URLQueryItem(name: $0.key, value: $0.value) }
         }
         guard let url = components.url else { throw V2EXError.decoding("URL 构造失败") }
-        return URLRequest(url: url)
+        var request = URLRequest(url: url)
+        // v1 接口经 Cloudflare 缓存 `max-age=432000`（5 天），且 CF 忽略
+        // no-cache 请求头 —— 默认 URL 拿到的评论可能滞后数小时甚至 5 天。
+        // 追加随机查询参数强制回源（cf-cache-status: MISS），每次拿实时数据；
+        // 随机 URL 同时让本地 URLCache 天然失效，双重保证数据新鲜。
+        var busted = components
+        busted.queryItems = (busted.queryItems ?? []) + [
+            URLQueryItem(name: "_", value: String(Int(Date().timeIntervalSince1970 * 1000)))
+        ]
+        if let fresh = busted.url { request.url = fresh }
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        return request
     }
 
     private func perform(_ request: URLRequest) async throws -> Data {
