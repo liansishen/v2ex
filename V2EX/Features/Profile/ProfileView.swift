@@ -76,7 +76,9 @@ struct ProfileView: View {
                         .frame(width: 36, height: 36)
                 }
                 .buttonStyle(.plain)
-                .glassEffect(.regular.interactive(), in: .circle)
+                // interactive 玻璃会干扰 NavigationLink 的点击（iOS 26），
+                // 导致要点几次才响应 —— 用纯装饰玻璃。
+                .glassEffect(.regular, in: .circle)
             }
         }
         .task(id: token.token) { await model.load(token: token.token) }

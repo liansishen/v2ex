@@ -185,8 +185,10 @@ struct GlassCircleButton<Content: View>: View {
                 .frame(width: 36, height: 36)
         }
         .buttonStyle(.plain)
+        // interactive 玻璃在 iOS 26 会拦截 Button 的点击（要点几次才响应），
+        // 这里只保留装饰性玻璃，交互交给 Button 自己。
         .glassEffect(
-            filled ? .regular.tint(Theme.accent).interactive() : .regular.interactive(),
+            filled ? .regular.tint(Theme.accent) : .regular,
             in: .circle
         )
     }
