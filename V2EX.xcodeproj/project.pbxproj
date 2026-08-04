@@ -24,6 +24,7 @@
 		98FA67B2046C4A5E714DBCE9 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1F88CCAC289B75CC5650EB33 /* Assets.xcassets */; };
 		9DCD12E6658B8BD7BED27585 /* NodeCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE83FEFC96FFE2B53972D0CA /* NodeCatalog.swift */; };
 		AA82A2ABA2280EE18F23C7C9 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D3D18A35A705E7C96685502 /* HomeView.swift */; };
+		B853F2282EDDB3C31B184BE6 /* WebLoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 599F3445401BCF070618A7AD /* WebLoginView.swift */; };
 		BF282EF7599568F5946D286E /* Stores.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47C86804E76925BACA4F4F28 /* Stores.swift */; };
 		CC19FE500CF1C1A1BAA2F23D /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0E880B91771525AA6EC6C96 /* Models.swift */; };
 		D05BE0081792146B09364963 /* TopicViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEFC5A0489A2A4FC9463497B /* TopicViews.swift */; };
@@ -41,6 +42,7 @@
 		34A54260B991107B0AFF2A4B /* SubViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubViews.swift; sourceTree = "<group>"; };
 		47C86804E76925BACA4F4F28 /* Stores.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Stores.swift; sourceTree = "<group>"; };
 		50B21E0D3A7CFBEE8C6B7BAC /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
+		599F3445401BCF070618A7AD /* WebLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebLoginView.swift; sourceTree = "<group>"; };
 		5A431F0C4F1474F22EA17AC2 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		621BA7F6293FA434C5F42BF2 /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		6D3D18A35A705E7C96685502 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
@@ -107,6 +109,7 @@
 				9454B94E936AE000AC35AEB1 /* AppearanceSettingsView.swift */,
 				952ED920E11A6B7AB4548070 /* SettingsView.swift */,
 				DE43160F1E2E5D55DFDD961B /* V2EXLoginView.swift */,
+				599F3445401BCF070618A7AD /* WebLoginView.swift */,
 			);
 			path = Settings;
 			sourceTree = "<group>";
@@ -321,6 +324,7 @@
 				444DAAAF90B56BE7ACE50713 /* V2EXClient.swift in Sources */,
 				6E4B75BF704A638F78BD463F /* V2EXLoginView.swift in Sources */,
 				5447B22BCE55A820900A5A96 /* V2EXSessionStore.swift in Sources */,
+				B853F2282EDDB3C31B184BE6 /* WebLoginView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

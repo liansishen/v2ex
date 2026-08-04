@@ -16,6 +16,7 @@ struct V2EXLoginView: View {
     @State private var needsTwoFactor = false
     @State private var isBusy = false
     @State private var errorMessage: String?
+    @State private var showWebLogin = false
 
     private var canSubmit: Bool {
         !username.trimmingCharacters(in: .whitespaces).isEmpty &&
@@ -30,7 +31,19 @@ struct V2EXLoginView: View {
                 if session.isLoggedIn {
                     loggedInCard
                 } else {
-                    loginForm
+                    // 主入口：网页登录（底部弹窗，浏览器环境天然通过所有校验）。
+                    Button {
+                        showWebLogin = true
+                    } label: {
+                        Label("在网页中登录", systemImage: "globe")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 13)
+                            .background(Theme.accent, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, Theme.Metric.headerPadding)
                 }
             }
             .padding(.top, 8)
@@ -40,10 +53,13 @@ struct V2EXLoginView: View {
         .background(Theme.canvas)
         .navigationTitle("V2EX 登录")
         .navigationBarTitleDisplayMode(.large)
-        .task { if !session.isLoggedIn, !needsTwoFactor { await loadCaptcha() } }
         // 两步验证直接弹出，不留在页面里。
         .sheet(isPresented: $needsTwoFactor) {
             TwoFactorSheet(onDone: { dismiss() })
+        }
+        // 网页登录：底部弹窗。
+        .sheet(isPresented: $showWebLogin) {
+            WebLoginSheet(onDone: { dismiss() })
         }
     }
 
@@ -340,18 +356,21 @@ private struct TwoFactorSheet: View {
         defer { isBusy = false }
         do {
             let once = try await V2EXClient.shared.twoFactorOnce(cookie: session.cookie)
-            let ok = try await V2EXClient.shared.signInTwoFactor(
+            guard let freshCookie = try await V2EXClient.shared.signInTwoFactor(
                 code: code, once: once, cookie: session.cookie
-            )
-            if ok, await V2EXClient.shared.verifySession(cookie: session.cookie) {
+            ) else {
+                errorMessage = "两步验证码不正确。请检查身份验证器的手机时间是否准确（TOTP 依赖时钟同步），然后重试。"
+                code = ""
+                return
+            }
+            // 2FA 通过后 V2EX 刷新了会话 —— 用新 cookie 更新登录状态。
+            session.save(cookie: freshCookie, username: session.username)
+            if await V2EXClient.shared.verifySession(cookie: freshCookie) {
                 dismiss()
                 onDone()
-            } else if ok {
+            } else {
                 session.clear()
                 errorMessage = "两步验证通过但会话验证失败，请重新登录"
-            } else {
-                errorMessage = "两步验证码不正确，请重试"
-                code = ""
             }
         } catch {
             if case V2EXError.sessionExpired = error {
@@ -361,5 +380,57 @@ private struct TwoFactorSheet: View {
                 errorMessage = (error as? V2EXError)?.errorDescription ?? error.localizedDescription
             }
         }
+    }
+}
+
+/// 网页登录弹窗：底部弹出，内嵌浏览器完成登录后自动关闭。
+private struct WebLoginSheet: View {
+    @EnvironmentObject private var session: V2EXSessionStore
+    @Environment(\.dismiss) private var dismiss
+
+    /// 登录成功并保存会话后，关闭整个登录页。
+    var onDone: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // 顶部玻璃条：标题 + 副标题 + 圆形关闭按钮。
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("网页登录")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(Theme.ink)
+                    Text("登录后可在 app 内直接回复")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.muted)
+                }
+
+                Spacer()
+
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.ink)
+                        .frame(width: 30, height: 30)
+                        .background(.ultraThinMaterial, in: Circle())
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
+            .background(.ultraThinMaterial)
+
+            Divider().opacity(0.3)
+
+            WebLoginView { cookie, username in
+                session.save(cookie: cookie, username: username)
+                dismiss()
+                onDone()
+            }
+        }
+        .background(Theme.canvas)
+        .presentationDetents([.large])
+        .presentationDragIndicator(.visible)
     }
 }

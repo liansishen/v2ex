@@ -65,8 +65,9 @@ actor V2EXClient {
 
         let webConfiguration = URLSessionConfiguration.ephemeral
         webConfiguration.timeoutIntervalForRequest = 20
+        // 对齐真实浏览器（CDP 抓包的完整 iPhone Safari UA）。
         webConfiguration.httpAdditionalHeaders = [
-            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15",
+            "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1",
         ]
         webSession = URLSession(configuration: webConfiguration)
 
@@ -261,7 +262,7 @@ actor V2EXClient {
         guard let url = URL(string: "https://www.v2ex.com/t/\(id)") else { return nil }
         var request = URLRequest(url: url)
         request.setValue(
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15",
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1",
             forHTTPHeaderField: "User-Agent"
         )
         guard let (data, _) = try? await session.data(for: request),
@@ -382,8 +383,7 @@ extension V2EXClient {
         guard let usernameField = Self.htmlField(html, pattern: #"<input type="text" class="sl" name="([^"]+)""#),
               let passwordField = Self.htmlField(html, pattern: #"<input type="password" class="sl" name="([^"]+)""#),
               let captchaField = Self.htmlField(html, pattern: #"/_captcha[\s\S]*?<input type="text" class="sl" name="([^"]+)""#),
-              let once = Self.htmlField(html, pattern: #"name="once" value="([^"]+)""#)
-                ?? Self.htmlField(html, pattern: #"value="([^"]+)" name="once""#)
+              let once = Self.extractOnce(from: html)
         else { return nil }
         return SignInChallenge(
             usernameField: usernameField,
@@ -392,6 +392,24 @@ extension V2EXClient {
             once: once,
             next: Self.htmlField(html, pattern: #"name="next" value="([^"]+)""#) ?? "/"
         )
+    }
+
+    /// 页面里 `once`（CSRF token）的提取：属性顺序不定、中间可能隔其他属性，
+    /// 所以用宽松匹配，最后兜底 JS 变量 `once = "..."` 的格式。
+    private static func extractOnce(from html: String) -> String? {
+        let patterns = [
+            #"<input[^>]*\bname="once"[^>]*\bvalue="([^"]+)""#,
+            #"<input[^>]*\bvalue="([^"]+)"[^>]*\bname="once""#,
+            #"once = "([^"]+)""#,
+            #"once=(\d+)""#,
+            #"'once':\s*'(\d+)'"#,
+            #"name="once" value="([^"]+)""#,
+            #"value="([^"]+)" name="once""#,
+        ]
+        for pattern in patterns {
+            if let value = htmlField(html, pattern: pattern) { return value }
+        }
+        return nil
     }
 
     /// 登录结果：cookie 先于 2FA 拿到（两步验证是同一会话的延续）。
@@ -406,7 +424,7 @@ extension V2EXClient {
     func captchaImage(once: String) async throws -> Data {
         var request = URLRequest(url: URL(string: "https://www.v2ex.com/_captcha?once=\(once)")!)
         request.setValue(
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15",
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1",
             forHTTPHeaderField: "User-Agent"
         )
         let (data, response) = try await webSession.data(for: request)
@@ -434,7 +452,9 @@ extension V2EXClient {
         var request = URLRequest(url: URL(string: "https://www.v2ex.com/signin")!)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.setValue("https://v2ex.com/signin", forHTTPHeaderField: "Referer")
+        // 对齐真实浏览器（CDP 抓包）：Referer + Origin 必须匹配。
+        request.setValue("https://www.v2ex.com/signin", forHTTPHeaderField: "Referer")
+        request.setValue("https://www.v2ex.com", forHTTPHeaderField: "Origin")
         request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
 
         let (data, response) = try await webSession.data(for: request)
@@ -461,17 +481,18 @@ extension V2EXClient {
     /// GET /2fa 页面取 once —— 两步验证第二步提交需要。
     func twoFactorOnce(cookie: String) async throws -> String {
         let html = try await webHTML(path: "/2fa", cookie: cookie)
-        guard let once = Self.htmlField(html, pattern: #"name="once" value="([^"]+)""#)
-            ?? Self.htmlField(html, pattern: #"once = "([^"]+)""#) else {
-            Self.log("twoFactorOnce: no once in /2fa")
+        guard let once = Self.extractOnce(from: html) else {
+            Self.log("twoFactorOnce: no once in /2fa, len=\(html.count) prefix=\(String(html.prefix(300)))")
             throw V2EXError.sessionExpired
         }
-        Self.log("twoFactorOnce: ok")
+        Self.log("twoFactorOnce: ok once=\(once)")
         return once
     }
 
-    /// POST /2fa 提交 TOTP 码。true = 验证通过（URL 不再停留 2fa）。
-    func signInTwoFactor(code: String, once: String, cookie: String) async throws -> Bool {
+    /// POST /2fa 提交 TOTP 码。验证通过时返回**更新后的完整会话 cookie**
+    /// （V2EX 在 2FA 通过后刷新会话，必须用新 cookie 发后续请求），
+    /// 失败返回 nil。
+    func signInTwoFactor(code: String, once: String, cookie: String) async throws -> String? {
         var components = URLComponents()
         components.queryItems = [
             URLQueryItem(name: "code", value: code),
@@ -481,15 +502,24 @@ extension V2EXClient {
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.setValue(cookie, forHTTPHeaderField: "Cookie")
-        request.setValue("https://v2ex.com/2fa", forHTTPHeaderField: "Referer")
+        // 对齐真实浏览器（CDP 抓包）：2FA 的 Referer 是 /2fa，且带 Origin。
+        request.setValue("https://www.v2ex.com/2fa", forHTTPHeaderField: "Referer")
+        request.setValue("https://www.v2ex.com", forHTTPHeaderField: "Origin")
         request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
 
-        let (_, response) = try await webSession.data(for: request)
+        let (data, response) = try await webSession.data(for: request)
         let http = response as? HTTPURLResponse
         let finalURL = http?.url?.absoluteString ?? "?"
         let ok = http?.statusCode == 200 && !finalURL.contains("2fa")
-        Self.log("signInTwoFactor: status=\(http?.statusCode ?? -1) url=\(finalURL) ok=\(ok)")
-        return ok
+        let body = String(data: data, encoding: .utf8) ?? ""
+        Self.log("signInTwoFactor: code=\(code) once=\(once) cookieLen=\(cookie.count) status=\(http?.statusCode ?? -1) url=\(finalURL) ok=\(ok)")
+        guard ok else {
+            // 2FA 的错误提示不在 problem 块里 —— 打完整 body 定位真实原因。
+            let title = Self.htmlField(body, pattern: #"<title>([^<]*)</title>"#) ?? ""
+            Self.log("signInTwoFactor rejected: title=\(title) bodyLen=\(body.count)")
+            return nil
+        }
+        return try extractCookies()
     }
 
     /// 用 cookie GET /settings 验证会话是否仍有效（200 且停在 /settings = 已登录）。
@@ -497,7 +527,7 @@ extension V2EXClient {
         var request = URLRequest(url: URL(string: "https://www.v2ex.com/settings")!)
         request.setValue(cookie, forHTTPHeaderField: "Cookie")
         request.setValue(
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15",
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1",
             forHTTPHeaderField: "User-Agent"
         )
         guard let (_, response) = try? await webSession.data(for: request),
@@ -507,7 +537,9 @@ extension V2EXClient {
         return true
     }
 
-    /// POST /api/topics/{id}/replies —— 网页端唯一的发回复入口。
+    /// POST /t/{id} —— V2EX 网页回复表单的端点（非 /api/topics/...）。
+    /// 成功 = 302 回话题页（URLSession 跟随 → 200 页面含新回复）；
+    /// 失败 = 200 提示页（冷却/风控），必须检查内容再下结论。
     func reply(topicID: Int, content: String, cookie: String) async throws {
         let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw V2EXError.replyFailed("回复内容不能为空") }
@@ -518,7 +550,7 @@ extension V2EXClient {
             URLQueryItem(name: "content", value: trimmed),
             URLQueryItem(name: "once", value: once),
         ]
-        var request = URLRequest(url: URL(string: "https://www.v2ex.com/api/topics/\(topicID)/replies")!)
+        var request = URLRequest(url: URL(string: "https://www.v2ex.com/t/\(topicID)")!)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.setValue(cookie, forHTTPHeaderField: "Cookie")
@@ -529,8 +561,25 @@ extension V2EXClient {
         let http = response as? HTTPURLResponse
         switch http?.statusCode {
         case 200:
-            Self.log("reply succeeded: topic=\(topicID) bytes=\(data.count)")
-            return
+            let body = String(data: data, encoding: .utf8) ?? ""
+            // V2EX 有回复冷却：间隔太短时返回 200 提示页（不是 problem div）。
+            if body.contains("你上一次回复是在") {
+                Self.log("reply rate limited: topic=\(topicID)")
+                throw V2EXError.replyFailed("回复过于频繁，V2EX 有回复间隔限制，请稍后再试")
+            }
+            if let problem = Self.htmlField(body, pattern: #"<div[^>]*class="problem[^"]*"[^>]*>([\s\S]*?)</div>"#) {
+                Self.log("reply rejected: topic=\(topicID) problem=\(HTMLText.plain(problem))")
+                throw V2EXError.replyFailed(HTMLText.plain(problem))
+            }
+            // 成功 = 跟随 302 后的话题页包含刚发的回复内容。
+            let probe = String(trimmed.prefix(40))
+            if !probe.isEmpty, body.contains(probe) {
+                Self.log("reply succeeded: topic=\(topicID) bytes=\(data.count)")
+                return
+            }
+            let title = Self.htmlField(body, pattern: #"<title>([^<]*)</title>"#) ?? ""
+            Self.log("reply 200 no confirmation: topic=\(topicID) title=\(title) bytes=\(data.count)")
+            throw V2EXError.replyFailed("回复未成功，请稍后重试")
         case 403:
             // once 过期 —— 重新取 once 再试一次。
             Self.log("reply once expired, retrying once: topic=\(topicID)")
@@ -542,14 +591,14 @@ extension V2EXClient {
             ]
             retry.httpBody = retryComponents.percentEncodedQuery?.data(using: .utf8)
             let (retryData, retryResponse) = try await webSession.data(for: retry)
-            if (retryResponse as? HTTPURLResponse)?.statusCode == 200 {
-                Self.log("reply retry succeeded: topic=\(topicID) bytes=\(retryData.count)")
+            let retryBody = String(data: retryData, encoding: .utf8) ?? ""
+            if (retryResponse as? HTTPURLResponse)?.statusCode == 200, retryBody.contains(String(trimmed.prefix(40))), !retryBody.contains("你上一次回复是在") {
+                Self.log("reply retry succeeded: topic=\(topicID)")
                 return
             }
-            let body = String(data: retryData, encoding: .utf8) ?? ""
             // 403 可能是会话失效，也可能只是临时拒绝 —— 验证 cookie 再下结论。
             let sessionOK = await verifySession(cookie: cookie)
-            Self.log("reply retry failed: HTTP \((retryResponse as? HTTPURLResponse)?.statusCode ?? -1) sessionOK=\(sessionOK) body=\(body.prefix(300))")
+            Self.log("reply retry failed: HTTP \((retryResponse as? HTTPURLResponse)?.statusCode ?? -1) sessionOK=\(sessionOK) body=\(retryBody.prefix(300))")
             if sessionOK {
                 throw V2EXError.replyFailed("回复被服务器拒绝，请稍后重试")
             }
@@ -563,8 +612,8 @@ extension V2EXClient {
 
     private func replyOnce(topicID: Int, cookie: String) async throws -> String {
         let html = try await webHTML(path: "/t/\(topicID)", cookie: cookie)
-        guard let once = Self.htmlField(html, pattern: #"once = "([^"]+)""#)
-            ?? Self.htmlField(html, pattern: #"name="once" value="([^"]+)""#) else {
+        guard let once = Self.extractOnce(from: html) else {
+            Self.log("replyOnce: no once in /t/\(topicID), len=\(html.count) prefix=\(String(html.prefix(300)))")
             throw V2EXError.sessionExpired
         }
         return once
@@ -582,7 +631,7 @@ extension V2EXClient {
     private func webHTML(path: String, cookie: String? = nil) async throws -> String {
         var request = URLRequest(url: URL(string: "https://www.v2ex.com" + path)!)
         request.setValue(
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15",
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1",
             forHTTPHeaderField: "User-Agent"
         )
         if let cookie { request.setValue(cookie, forHTTPHeaderField: "Cookie") }
