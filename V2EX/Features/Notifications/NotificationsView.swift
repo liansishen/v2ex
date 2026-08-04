@@ -114,6 +114,8 @@ struct NotificationsView: View {
             }
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
+        // Let the list scroll under the floating tab bar instead of stopping above it.
+        .ignoresSafeArea(edges: .bottom)
         .background(Theme.canvas)
         .toolbar(.hidden, for: .navigationBar)
         .safeAreaBar(edge: .top, spacing: 0) { header }
@@ -173,7 +175,8 @@ struct NotificationsView: View {
                     }
                 }
             }
-            .padding(.bottom, 12)
+            // Room for the floating tab bar + home indicator at the bottom.
+            .padding(.bottom, 100)
         }
         .scrollIndicators(.hidden)
         .refreshable { await model.refresh(token: token.token) }
