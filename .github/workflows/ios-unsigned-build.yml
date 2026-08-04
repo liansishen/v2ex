@@ -3,7 +3,8 @@ name: iOS Unsigned Build
 # 无签名编译：仅验证工程可编译，不产生可安装到真机的签名包。
 # 产出未签名 .ipa（真机 Release），可自行用免费 Apple ID 重签名后侧载安装
 # （如 Sideloadly、AltStore、爱思助手等工具）。
-# push 到 main 后发布到 nightly Release（每次覆盖更新）；打 v* 标签时发布对应版本。
+# push 到 main 后直接发布到 nightly Release（每次覆盖更新）；打 v* 标签时发布对应版本。
+# 不保存 Actions artifacts：产物只存在于 GitHub Release，不占用 Actions 存储。
 
 on:
   push:
@@ -19,6 +20,8 @@ jobs:
   build:
     name: Build unsigned IPA
     runs-on: macos-15
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -51,53 +54,20 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent Payload V2EX.ipa
           ls -lh V2EX.ipa
 
-      - name: Upload unsigned IPA
-        uses: actions/upload-artifact@v4
-        with:
-          name: V2EX-unsigned-ipa
-          path: V2EX.ipa
-          retention-days: 7
-          if-no-files-found: error
-
-  release:
-    name: Publish unsigned release
-    needs: build
-    # 仅 main 分支推送（nightly 覆盖更新）或 v* 标签推送（版本化发布）
-    if: >-
-      github.event_name == 'push' &&
-      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-          merge-multiple: true
-
-      - name: Resolve release tag and name
-        id: meta
-        run: |
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            TAG="${GITHUB_REF#refs/tags/}"
-            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-            echo "name=V2EX $TAG 无签名构建" >> "$GITHUB_OUTPUT"
-          else
-            echo "tag=nightly" >> "$GITHUB_OUTPUT"
-            echo "name=V2EX 无签名构建 (nightly)" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Publish release
+        if: >-
+          github.event_name == 'push' &&
+          (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           NOTES="未签名 IPA（Commit: \`$GITHUB_SHA\`）。需使用免费 Apple ID 重签名后侧载安装（如 Sideloadly、AltStore、爱思助手等）。"
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             # 版本化发布：标签唯一，直接创建
-            gh release create "${{ steps.meta.outputs.tag }}" artifacts/* \
+            TAG="${GITHUB_REF#refs/tags/}"
+            gh release create "$TAG" V2EX.ipa \
               --repo "$GITHUB_REPOSITORY" \
-              --title "${{ steps.meta.outputs.name }}" \
+              --title "V2EX $TAG 无签名构建" \
               --notes "$NOTES"
           else
             # nightly：删除旧发布（连带 tag）后重建。
@@ -105,7 +75,7 @@ jobs:
             gh release delete nightly --yes --cleanup-tag \
               --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
             for i in 1 2 3 4 5 6; do
-              if gh release create nightly artifacts/* \
+              if gh release create nightly V2EX.ipa \
                 --repo "$GITHUB_REPOSITORY" \
                 --title "V2EX 无签名构建 (nightly)" \
                 --target "$GITHUB_SHA" \
