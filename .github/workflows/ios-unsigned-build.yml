@@ -87,20 +87,33 @@ jobs:
             echo "name=V2EX 无签名构建 (nightly)" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Remove stale nightly release
-        if: github.ref == 'refs/heads/main'
+      - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete nightly --yes 2>/dev/null || true
-          gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/nightly" 2>/dev/null || true
-
-      - name: Create release with unsigned IPA
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "${{ steps.meta.outputs.tag }}" artifacts/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "${{ steps.meta.outputs.name }}" \
-            --target "$GITHUB_SHA" \
-            --notes "未签名 IPA（Commit: \`$GITHUB_SHA\`）。需使用免费 Apple ID 重签名后侧载安装（如 Sideloadly、AltStore、爱思助手等）。"
+          NOTES="未签名 IPA（Commit: \`$GITHUB_SHA\`）。需使用免费 Apple ID 重签名后侧载安装（如 Sideloadly、AltStore、爱思助手等）。"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            # 版本化发布：标签唯一，直接创建
+            gh release create "${{ steps.meta.outputs.tag }}" artifacts/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "${{ steps.meta.outputs.name }}" \
+              --notes "$NOTES"
+          else
+            # nightly：删除旧发布（连带 tag）后重建。
+            # GitHub API 删除后存在短暂不一致，重试创建直至成功。
+            gh release delete nightly --yes --cleanup-tag \
+              --repo "$GITHUB_REPOSITORY" 2>/dev/null || true
+            for i in 1 2 3 4 5 6; do
+              if gh release create nightly artifacts/* \
+                --repo "$GITHUB_REPOSITORY" \
+                --title "V2EX 无签名构建 (nightly)" \
+                --target "$GITHUB_SHA" \
+                --notes "$NOTES"; then
+                echo "nightly release recreated (attempt $i)"
+                exit 0
+              fi
+              echo "attempt $i failed, retrying in 10s..."
+              sleep 10
+            done
+            exit 1
+          fi
