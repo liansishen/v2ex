@@ -9,8 +9,15 @@ struct TopicDetailView: View {
     @EnvironmentObject private var favorites: FavoritesStore
     @EnvironmentObject private var readState: ReadStateStore
     @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var session: V2EXSessionStore
     @Environment(\.openURL) private var openURL
     @Environment(\.dismiss) private var dismiss
+
+    @State private var replyDraft = ""
+    @State private var replyError: String?
+    @State private var showReplyError = false
+    @State private var isSending = false
+    @FocusState private var composerFocused: Bool
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -232,7 +239,10 @@ struct TopicDetailView: View {
         } else {
             CardSection {
                 ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                    ReplyRow(item: item)
+                    ReplyRow(item: item, onReply: { mention in
+                        replyDraft = mention
+                        composerFocused = true
+                    })
                         .id(item.id)
                         .onAppear {
                             guard settings.rememberReadingPosition else { return }
@@ -250,36 +260,93 @@ struct TopicDetailView: View {
 
     /// Floating Liquid Glass composer. The field and the send button live in one
     /// GlassEffectContainer so their glass blends instead of stacking.
+    /// 已登录（网页会话）时直接在 app 内输入并发送；未登录时跳网页版。
     private var replyComposer: some View {
         GlassEffectContainer(spacing: 12) {
-            HStack(spacing: 12) {
-                Text("写下你的回复…")
-                    .font(.system(size: 16))
-                    .foregroundStyle(Theme.muted)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.leading, 18)
-                    .padding(.trailing, 12)
-                    .padding(.vertical, 14)
-                    .glassEffect(.regular.interactive(), in: .capsule)
-                    .onTapGesture {
-                        // API 2.0 has no reply endpoint — hand off to the web composer.
-                        openURL(URL(string: "https://www.v2ex.com/t/\(topicID)#reply")!)
-                    }
+            if session.isLoggedIn {
+                HStack(alignment: .bottom, spacing: 12) {
+                    TextField("写下你的回复…", text: $replyDraft, axis: .vertical)
+                        .lineLimit(1...6)
+                        .font(.system(size: 16))
+                        .focused($composerFocused)
+                        .submitLabel(.send)
+                        .onSubmit { Task { await sendReply() } }
+                        .padding(.leading, 18)
+                        .padding(.trailing, 12)
+                        .padding(.vertical, 14)
+                        .glassEffect(.regular.interactive(), in: .capsule)
 
-                Button {
-                    openURL(URL(string: "https://www.v2ex.com/t/\(topicID)#reply")!)
-                } label: {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 48, height: 48)
+                    Button {
+                        Task { await sendReply() }
+                    } label: {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 48, height: 48)
+                            .background(Circle().fill(Theme.accent))
+                    }
+                    .buttonStyle(.plain)
+                    // 不用 glassEffect：iOS 26 的 interactive 玻璃层会吃掉
+                    // Button 的点击，导致发送无反应。
+                    .disabled(isSending || replyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .opacity(isSending || replyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.4 : 1)
                 }
-                .buttonStyle(.plain)
-                .glassEffect(.regular.tint(Theme.accent).interactive(), in: .circle)
+            } else {
+                HStack(spacing: 12) {
+                    Text("写下你的回复…（未登录将打开网页版）")
+                        .font(.system(size: 15))
+                        .foregroundStyle(Theme.muted)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, 18)
+                        .padding(.trailing, 12)
+                        .padding(.vertical, 14)
+                        .glassEffect(.regular.interactive(), in: .capsule)
+                        .onTapGesture {
+                            // API 2.0 has no reply endpoint — hand off to the web composer.
+                            openURL(URL(string: "https://www.v2ex.com/t/\(topicID)#reply")!)
+                        }
+
+                    Button {
+                        openURL(URL(string: "https://www.v2ex.com/t/\(topicID)#reply")!)
+                    } label: {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 48, height: 48)
+                    }
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular.tint(Theme.accent).interactive(), in: .circle)
+                }
             }
         }
         .padding(.horizontal, Theme.Metric.screenPadding)
         .padding(.bottom, 8)
+        .alert("回复失败", isPresented: $showReplyError) {
+            Button("好", role: .cancel) { }
+        } message: {
+            Text(replyError ?? "")
+        }
+    }
+
+    private func sendReply() async {
+        let content = replyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !content.isEmpty, !isSending else { return }
+        isSending = true
+        defer { isSending = false }
+        do {
+            try await V2EXClient.shared.reply(topicID: topicID, content: content, cookie: session.cookie)
+            replyDraft = ""
+            composerFocused = false
+            await model.load(id: topicID, token: token.token, offline: offline)
+        } catch {
+            // 回复失败不再清登录状态：一次失败不代表会话失效，由用户决定何时退出。
+            if case V2EXError.sessionExpired = error {
+                replyError = "网页会话可能已失效，请到设置里重新登录 V2EX。"
+            } else {
+                replyError = (error as? V2EXError)?.errorDescription ?? error.localizedDescription
+            }
+            showReplyError = true
+        }
     }
 }
 
@@ -287,6 +354,7 @@ struct TopicDetailView: View {
 
 struct ReplyRow: View {
     let item: ThreadedReply
+    var onReply: ((String) -> Void)? = nil
     @EnvironmentObject private var settings: AppSettings
 
     var body: some View {
@@ -321,6 +389,18 @@ struct ReplyRow: View {
                     Text("#\(item.floor)")
                         .font(.system(size: 11))
                         .foregroundStyle(Theme.faint)
+                    if let onReply {
+                        Button {
+                            onReply("@\(item.reply.authorName) #\(item.floor) ")
+                        } label: {
+                            Image(systemName: "arrowshape.turn.up.left")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Theme.accent)
+                                .frame(width: 32, height: 32)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
 
                 if let quoted = item.quoted {
