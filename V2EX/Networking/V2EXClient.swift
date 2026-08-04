@@ -674,6 +674,102 @@ extension V2EXClient {
         return appends
     }
 
+    // MARK: - Favorites (web session)
+
+    /// 主题页收藏区：是否已收藏 + 页面 once。
+    /// V2EX 收藏是 toggle：未收藏时按钮为「加入收藏」，已收藏时按钮为「取消收藏」。
+    struct FavoritePageInfo {
+        let favorited: Bool
+        let once: String
+    }
+
+    /// 从登录态主题页解析收藏状态与 once。
+    /// 未收藏 → `/favorite/topic/:id?once=…`「加入收藏」；
+    /// 已收藏 → `/unfavorite/topic/:id?once=…`「取消收藏」。
+    func favoritePageInfo(topicID: Int, cookie: String) async throws -> FavoritePageInfo {
+        let html = try await webHTML(path: "/t/\(topicID)", cookie: cookie)
+        let favorited = !html.contains("加入收藏")
+        guard let once = Self.htmlField(html, pattern: #"/(?:favorite|unfavorite)/topic/\d+\?once=(\d+)"#) else {
+            Self.log("favoritePageInfo: no favorite once, topic=\(topicID) len=\(html.count)")
+            throw V2EXError.sessionExpired
+        }
+        return FavoritePageInfo(favorited: favorited, once: once)
+    }
+
+    /// toggle 收藏：GET /favorite（或 /unfavorite）/topic/:id?once=…，302 回主题页。
+    /// 返回操作后的新状态（true = 已收藏）。
+    func toggleFavorite(topicID: Int, cookie: String) async throws -> Bool {
+        let info = try await favoritePageInfo(topicID: topicID, cookie: cookie)
+        let action = info.favorited ? "unfavorite" : "favorite"
+        guard let url = URL(string: "https://www.v2ex.com/\(action)/topic/\(topicID)?once=\(info.once)") else {
+            throw V2EXError.webLogin("收藏链接构造失败")
+        }
+        var request = URLRequest(url: url)
+        request.setValue(
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1",
+            forHTTPHeaderField: "User-Agent"
+        )
+        request.setValue(cookie, forHTTPHeaderField: "Cookie")
+        request.setValue("https://www.v2ex.com/t/\(topicID)", forHTTPHeaderField: "Referer")
+        let (_, response) = try await webSession.data(for: request)
+        let http = response as? HTTPURLResponse
+        guard http?.statusCode == 200 else {
+            Self.log("toggleFavorite: HTTP \(http?.statusCode ?? -1) topic=\(topicID)")
+            throw V2EXError.webLogin("收藏操作失败，请稍后重试")
+        }
+        // favorite/unfavorite 接口返回轻量响应（非主题页），无法从 body 判断
+        // 新状态；请求 200 即成功，新状态 = 操作前状态的翻转。
+        let newFavorited = !info.favorited
+        Self.log("toggleFavorite: topic=\(topicID) old=\(info.favorited) new=\(newFavorited)")
+        return newFavorited
+    }
+
+    /// 收藏列表：GET /my/topics（登录态，分页拉全）。行结构实测：
+    /// `<span class="item_title"><a href="/t/123#reply4" class="topic-link">标题</a></span>`
+    /// 回复数在同一行尾部 `<a href="/t/123#reply4" class="count_orange">4</a>`。
+    /// 每页 20 条，逐页抓取直到空页或上限（10 页 = 200 条）。
+    func favoriteTopics(cookie: String) async throws -> [V2Topic] {
+        let titlePattern = #"<a href="/t/(\d+)(?:#[^"]*)?"[^>]*class="[^"]*topic-link[^"]*"[^>]*>([\s\S]*?)</a>"#
+        let countPattern = #"<a href="/t/(\d+)(?:#[^"]*)?"[^>]*class="(?:count_orange|count_gray)"[^>]*>(\d+)"#
+
+        var all: [V2Topic] = []
+        var page = 1
+        while page <= 10 {
+            let path = page == 1 ? "/my/topics" : "/my/topics?p=\(page)"
+            let html = try await webHTML(path: path, cookie: cookie)
+            guard html.contains("topic-link"), !html.contains("Object Not Found") else {
+                if page > 1 { break }  // 后续页不存在，说明已拉完
+                Self.log("favoriteTopics: unexpected page len=\(html.count)")
+                throw V2EXError.sessionExpired
+            }
+            let titles = Self.matches(in: html, pattern: titlePattern, groupCount: 2)
+            let counts = Self.matches(in: html, pattern: countPattern, groupCount: 2)
+            let replyCounts: [Int: Int] = counts.reduce(into: [:]) { result, m in
+                if let id = Int(m[1]), let replies = Int(m[2]) { result[id] = replies }
+            }
+            Self.log("favoriteTopics: page=\(page) rows=\(titles.count)")
+            for m in titles {
+                guard let id = Int(m[1]) else { continue }
+                all.append(V2Topic(
+                    id: id,
+                    title: HTMLText.plain(m[2]),
+                    content: nil,
+                    contentRendered: nil,
+                    url: "https://www.v2ex.com/t/\(id)",
+                    replies: replyCounts[id] ?? 0,
+                    created: nil,
+                    lastTouched: nil,
+                    lastReplyBy: nil,
+                    node: nil,
+                    member: nil
+                ))
+            }
+            if titles.count < 20 { break }  // 不满一页 = 最后一页
+            page += 1
+        }
+        return all
+    }
+
     /// 解析补充内容块。V2EX 改版后的结构：
     /// `<div class="subtle"><span class="fade">Supplement 1 · 2 小时 8 分钟前</span>
     ///  <div class="topic_content">正文…</div></div>`

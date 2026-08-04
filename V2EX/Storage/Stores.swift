@@ -168,6 +168,18 @@ final class FavoritesStore: ObservableObject {
         }
         DiskStore.save(topics, to: file)
     }
+
+    /// 拉取 V2EX 网页收藏并合并进本地（登录态）。本地已有的保留，
+    /// 新出现的远程收藏插到最前；未登录或失败时静默跳过。
+    func syncFromRemote(cookie: String) async {
+        guard !cookie.isEmpty else { return }
+        guard let remote = try? await V2EXClient.shared.favoriteTopics(cookie: cookie) else { return }
+        let existing = Set(topics.map(\.id))
+        let fresh = remote.filter { !existing.contains($0.id) }
+        guard !fresh.isEmpty else { return }
+        topics.insert(contentsOf: fresh, at: 0)
+        DiskStore.save(topics, to: file)
+    }
 }
 
 // MARK: - Offline

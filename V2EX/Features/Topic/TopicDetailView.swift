@@ -17,6 +17,7 @@ struct TopicDetailView: View {
     @State private var replyError: String?
     @State private var showReplyError = false
     @State private var isSending = false
+    @State private var isSyncingFavorite = false
     @FocusState private var composerFocused: Bool
 
     var body: some View {
@@ -85,11 +86,37 @@ struct TopicDetailView: View {
         ToolbarItem(placement: .topBarTrailing) {
             HStack(spacing: 16) {
                 Button {
-                    if let topic = model.topic { favorites.toggle(topic) }
+                    guard let topic = model.topic, !isSyncingFavorite else { return }
+                    if session.isLoggedIn {
+                        // 已登录：星标转 loading，V2EX 同步完成后再更新状态。
+                        isSyncingFavorite = true
+                        Task {
+                            do {
+                                let newState = try await V2EXClient.shared.toggleFavorite(
+                                    topicID: topic.id, cookie: session.cookie
+                                )
+                                if newState != favorites.contains(topic.id) {
+                                    favorites.toggle(topic)  // 服务器最终状态为准
+                                }
+                            } catch {
+                                // 同步失败：保持原状态。
+                            }
+                            isSyncingFavorite = false
+                        }
+                    } else {
+                        favorites.toggle(topic)
+                    }
                 } label: {
-                    Image(systemName: favorites.contains(topicID) ? "star.fill" : "star")
-                        .foregroundStyle(favorites.contains(topicID) ? Theme.amber : Theme.body)
+                    Group {
+                        if isSyncingFavorite {
+                            ProgressView().controlSize(.small).tint(Theme.body)
+                        } else {
+                            Image(systemName: favorites.contains(topicID) ? "star.fill" : "star")
+                                .foregroundStyle(favorites.contains(topicID) ? Theme.amber : Theme.body)
+                        }
+                    }
                 }
+                .disabled(isSyncingFavorite)
                 Menu {
                     Button {
                         toggleOffline()
