@@ -62,7 +62,7 @@ struct TopicDetailView: View {
         .toolbar { toolbarContent }
         .task {
             readState.markRead(topicID)
-            await model.load(id: topicID, token: token.token, offline: offline)
+            await model.load(id: topicID, token: token.token, cookie: session.cookie, offline: offline)
         }
     }
 
@@ -166,6 +166,36 @@ struct TopicDetailView: View {
                 } else {
                     ContentBlocksView(blocks: blocks)
                 }
+
+                // 楼主 APPEND：网页抓取，API 不返回。
+                if !model.appends.isEmpty {
+                    ForEach(model.appends, id: \.self) { append in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label(
+                                "楼主 \(append.timeLabel.isEmpty ? "补充" : append.timeLabel) 补充",
+                                systemImage: "plus.bubble"
+                            )
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Theme.accent)
+
+                            let appendBlocks = HTMLText.blocks(from: append.content)
+                            if appendBlocks.isEmpty {
+                                Text(append.content)
+                                    .font(.system(size: 15))
+                                    .foregroundStyle(Theme.ink)
+                            } else {
+                                ContentBlocksView(blocks: appendBlocks)
+                            }
+                        }
+                        .padding(.top, 10)
+                        .padding(.leading, 12)
+                        .overlay(alignment: .leading) {
+                            Rectangle()
+                                .fill(Theme.accent.opacity(0.35))
+                                .frame(width: 2.5)
+                        }
+                    }
+                }
             }
         }
     }
@@ -216,7 +246,7 @@ struct TopicDetailView: View {
                     message: message,
                     actionTitle: "重试"
                 ) {
-                    Task { await model.load(id: topicID, token: token.token, offline: offline) }
+                    Task { await model.load(id: topicID, token: token.token, cookie: session.cookie, offline: offline) }
                 }
             } else if !token.hasToken, (model.topic?.replies ?? 0) > 0 {
                 // v1's replies endpoint returns empty data for recent threads —
@@ -337,7 +367,7 @@ struct TopicDetailView: View {
             try await V2EXClient.shared.reply(topicID: topicID, content: content, cookie: session.cookie)
             replyDraft = ""
             composerFocused = false
-            await model.load(id: topicID, token: token.token, offline: offline)
+            await model.load(id: topicID, token: token.token, cookie: session.cookie, offline: offline)
         } catch {
             // 回复失败不再清登录状态：一次失败不代表会话失效，由用户决定何时退出。
             if case V2EXError.sessionExpired = error {

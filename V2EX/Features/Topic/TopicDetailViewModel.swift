@@ -16,6 +16,7 @@ final class TopicDetailViewModel: ObservableObject {
 
     @Published private(set) var topic: V2Topic?
     @Published private(set) var replies: [ThreadedReply] = []
+    @Published private(set) var appends: [TopicAppend] = []
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var repliesErrorMessage: String?
@@ -50,10 +51,11 @@ final class TopicDetailViewModel: ObservableObject {
         return (topic, rawReplies)
     }
 
-    func load(id: Int, token: String, offline: OfflineStore) async {
+    func load(id: Int, token: String, cookie: String, offline: OfflineStore) async {
         isLoading = true
         errorMessage = nil
         repliesErrorMessage = nil
+        appends = []
         defer { isLoading = false }
 
         // A saved topic renders immediately, then refreshes if the network is up.
@@ -107,6 +109,20 @@ final class TopicDetailViewModel: ObservableObject {
         // View counts aren't in any API — scrape the topic page once.
         if topicViews == nil {
             topicViews = await V2EXClient.shared.topicViews(id: id)
+        }
+
+        // APPEND 也只有网页有：有会话 cookie 时抓取（失败静默降级）。
+        if !cookie.isEmpty, appends.isEmpty {
+            print("[v2ex-appends] loading, cookie=\(cookie.count) chars")
+            do {
+                let fetched = try await V2EXClient.shared.topicAppends(id: id, cookie: cookie)
+                appends = fetched
+                print("[v2ex-appends] fetched=\(fetched.count)")
+            } catch {
+                print("[v2ex-appends] fetch error: \(error)")
+            }
+        } else if cookie.isEmpty {
+            print("[v2ex-appends] skipped, no cookie")
         }
     }
 

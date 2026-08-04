@@ -610,6 +610,90 @@ extension V2EXClient {
         }
     }
 
+    /// 抓取楼主 APPEND（追加内容）。API 1.0/2.0 都不返回这个字段，
+    /// 只能从网页话题页解析 `<div class="topic_append">` 块。
+    /// 注意：V2EX 对未登录访问隐藏 APPEND，需要登录 cookie 才能抓到。
+    func topicAppends(id: Int, cookie: String) async throws -> [TopicAppend] {
+        var request = URLRequest(url: URL(string: "https://www.v2ex.com/t/\(id)")!)
+        request.setValue(
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1",
+            forHTTPHeaderField: "User-Agent"
+        )
+        request.setValue(cookie, forHTTPHeaderField: "Cookie")
+        let (data, response) = try await webSession.data(for: request)
+        let http = response as? HTTPURLResponse
+        let html = String(data: data, encoding: .utf8) ?? ""
+        let title = Self.htmlField(html, pattern: #"<title>([^<]*)</title>"#) ?? ""
+        let finalURL = http?.url?.absoluteString ?? "?"
+        let appends = Self.extractAppends(from: html)
+        Self.log("topicAppends: topic=\(id) status=\(http?.statusCode ?? -1) url=\(finalURL) title=\(title) found=\(appends.count) supplementHits=\((try? NSRegularExpression(pattern: #"Supplement \d+"#))?.matches(in: html, range: NSRange(html.startIndex..., in: html)).count ?? -1) len=\(html.count)")
+        for append in appends {
+            Self.log("topicAppends append[\(append.index)] time=\(append.timeLabel) contentLen=\(append.content.count) content=\(String(append.content.prefix(100)))")
+        }
+        if appends.isEmpty {
+            // 诊断：登录态页面的 subtle 块（Supplement 所在区域）内容。
+            let subtleCount = html.components(separatedBy: #"class="subtle""#).count - 1
+            Self.log("topicAppends: subtle blocks=\(subtleCount)")
+            if let r = html.range(of: #"class="subtle""#) {
+                let snippet = String(html[r.lowerBound...].prefix(700)).replacingOccurrences(of: "\n", with: " ")
+                Self.log("topicAppends first subtle: \(snippet)")
+            }
+        }
+        return appends
+    }
+
+    /// 解析补充内容块。V2EX 改版后的结构：
+    /// `<div class="subtle"><span class="fade">Supplement 1 · 2 小时 8 分钟前</span>
+    ///  <div class="topic_content">正文…</div></div>`
+    /// 旧版结构：`<div class="topic_append">楼主在 <span class="time">…</span> 添加了新内容
+    ///  <div class="topic_append_content">正文…</div></div>`
+    private static func extractAppends(from html: String) -> [TopicAppend] {
+        var result: [TopicAppend] = []
+
+        // 新版附言块。登录态显示「第 1 条附言」，未登录/爬虫显示 "Supplement 1"。
+        let supplementPattern = #"<div class="subtle">[\s\S]*?<span class="fade">[^<]*?(\d+)[^<]*?·\s*([^<]+)</span>[\s\S]*?<div class="topic_content">([\s\S]*?)</div>"#
+        for match in Self.matches(in: html, pattern: supplementPattern, groupCount: 3) {
+            // match[0] 是完整匹配，[1]=序号 [2]=时间 [3]=内容（保留 HTML，链接才能渲染成可点击）。
+            let index = Int(match[1]) ?? result.count + 1
+            let time = match[2]
+                .replacingOccurrences(of: "&nbsp;", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let content = match[3].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !content.isEmpty else { continue }
+            result.append(TopicAppend(index: index, timeLabel: time, content: content))
+        }
+
+        // 旧版 topic_append 块（老帖可能还是旧结构）。
+        let marker = #"<div class="topic_append">"#
+        var searchStart = html.startIndex
+        while let blockStart = html.range(of: marker, range: searchStart..<html.endIndex) {
+            let block = html[blockStart.upperBound..<html.endIndex]
+            guard let contentRange = block.range(of: #"<div class="topic_append_content">"#) else { break }
+            let head = block[..<contentRange.lowerBound]
+            let content = block[contentRange.upperBound...]
+                .prefix(while: { $0 != "<" })
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let timeStr = Self.htmlField(String(head), pattern: #"<span class="time">([^<]+)</span>"#) ?? ""
+            result.append(TopicAppend(index: result.count + 1, timeLabel: timeStr, content: String(content)))
+            searchStart = contentRange.upperBound
+        }
+
+        return result
+    }
+
+    /// 返回正则所有匹配，每组捕获对应一个数组元素。
+    private static func matches(in string: String, pattern: String, groupCount: Int) -> [[String]] {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let range = NSRange(string.startIndex..., in: string)
+        return regex.matches(in: string, range: range).compactMap { match in
+            guard match.numberOfRanges == groupCount + 1 else { return nil }
+            return (0...groupCount).map { i in
+                guard let r = Range(match.range(at: i), in: string) else { return "" }
+                return String(string[r])
+            }
+        }
+    }
+
     private func replyOnce(topicID: Int, cookie: String) async throws -> String {
         let html = try await webHTML(path: "/t/\(topicID)", cookie: cookie)
         guard let once = Self.extractOnce(from: html) else {

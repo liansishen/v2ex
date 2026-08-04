@@ -120,6 +120,14 @@ struct V2Topic: Codable, Identifiable, Hashable {
 
 // MARK: - Reply
 
+/// 楼主 APPEND（补充内容）。API 1.0/2.0 都不返回，只能从网页 HTML 抓。
+/// 新版 V2EX 显示为 "Supplement N · 相对时间"（旧版是 topic_append）。
+struct TopicAppend: Codable, Hashable {
+    let index: Int          // Supplement 序号（1-based）
+    let timeLabel: String   // 相对时间，如 "2 小时 8 分钟前"
+    let content: String
+}
+
 struct V2Reply: Codable, Identifiable, Hashable {
     let id: Int
     var content: String
