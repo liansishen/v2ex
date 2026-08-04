@@ -62,6 +62,17 @@ final class HomeViewModel: ObservableObject {
         }
     }
 
+    /// 明显的推广/广告信号词。命中则从首页 feed 隐藏——V2EX 的最新流里
+    /// 偶尔会混入“免费送/邀请码/住宅 IP”这类推广帖，它们不该占首页版面。
+    private static let promotionSignals = [
+        "邀请码", "免费送", "动态住宅", "住宅 ip", "住宅ip", "流量用不完", "注册送", "返利",
+    ]
+
+    static func isPromotion(_ topic: V2Topic) -> Bool {
+        let haystack = "\(topic.title) \(topic.authorName)".lowercased()
+        return promotionSignals.contains { haystack.contains($0) }
+    }
+
     private func followingFeed(nodes: [String]) async throws -> [V2Topic] {
         guard !nodes.isEmpty else { return try await V2EXClient.shared.latestTopics() }
 
@@ -102,7 +113,9 @@ struct HomeView: View {
         }
     }
 
-    private var visibleTopics: [V2Topic] { blocks.filter(model.topics) }
+    private var visibleTopics: [V2Topic] {
+        blocks.filter(model.topics).filter { !HomeViewModel.isPromotion($0) }
+    }
 
     var body: some View {
         // One page per feed: swipe left/right to change category, the chip rail
