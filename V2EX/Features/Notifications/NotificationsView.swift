@@ -14,7 +14,7 @@ final class NotificationsViewModel: ObservableObject {
 
     var unreadCount: Int { items.filter { !seenIDs.contains($0.id) }.count }
 
-    var visible: [V2Notification] {
+    func visible(in scope: V2Notification.Kind?) -> [V2Notification] {
         guard let scope else { return items }
         return items.filter { $0.kind == scope }
     }
@@ -97,16 +97,27 @@ struct NotificationsView: View {
     @EnvironmentObject private var model: NotificationsViewModel
     @EnvironmentObject private var token: TokenStore
 
+    /// Per-scope scroll offsets, so swiping between scopes doesn't lose your place.
+    @State private var scrollPositions: [V2Notification.Kind?: ScrollPosition] = [:]
+
     private let scopes: [(kind: V2Notification.Kind?, title: String)] = [
         (.reply, "回复我的"), (.mention, "@ 我的"), (.thanks, "感谢"), (nil, "全部"),
     ]
 
     var body: some View {
-        content
-            .background(Theme.canvas)
-            .toolbar(.hidden, for: .navigationBar)
-            .safeAreaBar(edge: .top, spacing: 0) { header }
-            .task { await model.refresh(token: token.token) }
+        // One page per scope: swipe left/right to change the filter, the chip
+        // rail above stays in sync through `model.scope`.
+        TabView(selection: $model.scope) {
+            ForEach(Array(scopes.enumerated()), id: \.offset) { _, scope in
+                page(for: scope.kind)
+                    .tag(scope.kind)
+            }
+        }
+        .tabViewStyle(.page(indexDisplayMode: .never))
+        .background(Theme.canvas)
+        .toolbar(.hidden, for: .navigationBar)
+        .safeAreaBar(edge: .top, spacing: 0) { header }
+        .task { await model.refresh(token: token.token) }
     }
 
     private var header: some View {
@@ -125,7 +136,7 @@ struct NotificationsView: View {
                             title: count > 0 ? "\(scope.title) \(count)" : scope.title,
                             isSelected: model.scope == scope.kind
                         ) {
-                            withAnimation(.snappy) { model.scope = scope.kind }
+                            model.scope = scope.kind
                         }
                     }
                 }
@@ -136,9 +147,9 @@ struct NotificationsView: View {
         }
     }
 
-    @ViewBuilder
-    private var content: some View {
-        ScrollView {
+    private func page(for kind: V2Notification.Kind?) -> some View {
+        let visible = model.visible(in: kind)
+        return ScrollView {
             LazyVStack(spacing: 10) {
                 if !token.hasToken {
                     tokenPrompt
@@ -149,13 +160,13 @@ struct NotificationsView: View {
                                    actionTitle: "重试") {
                         Task { await model.refresh(token: token.token) }
                     }
-                } else if model.visible.isEmpty {
+                } else if visible.isEmpty {
                     EmptyStateCard(icon: "bell.slash", title: "没有新通知")
                 } else {
                     CardSection {
-                        ForEach(Array(model.visible.enumerated()), id: \.element.id) { index, item in
+                        ForEach(Array(visible.enumerated()), id: \.element.id) { index, item in
                             row(item)
-                            if index < model.visible.count - 1 {
+                            if index < visible.count - 1 {
                                 RowSeparator(leadingInset: 62)
                             }
                         }
@@ -166,6 +177,14 @@ struct NotificationsView: View {
         }
         .scrollIndicators(.hidden)
         .refreshable { await model.refresh(token: token.token) }
+        .scrollPosition(scrollBinding(for: kind))
+    }
+
+    private func scrollBinding(for kind: V2Notification.Kind?) -> Binding<ScrollPosition> {
+        Binding(
+            get: { scrollPositions[kind] ?? ScrollPosition() },
+            set: { scrollPositions[kind] = $0 }
+        )
     }
 
     private var tokenPrompt: some View {

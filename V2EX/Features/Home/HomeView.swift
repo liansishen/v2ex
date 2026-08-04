@@ -18,7 +18,7 @@ final class HomeViewModel: ObservableObject {
         }
     }
 
-    @Published var feed: Feed = .following
+    @Published var feed: Feed = .latest
     @Published private(set) var topics: [V2Topic] = []
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
@@ -51,8 +51,12 @@ final class HomeViewModel: ObservableObject {
                 result = try await followingFeed(nodes: followedNodes)
             }
             cache[feed] = result
+            // A newer selection may have landed while this request was in flight —
+            // don't let a stale response clobber the page the user is looking at.
+            guard self.feed == feed else { return }
             topics = result
         } catch {
+            guard self.feed == feed else { return }
             errorMessage = (error as? V2EXError)?.errorDescription ?? error.localizedDescription
             topics = cache[feed] ?? []
         }
@@ -89,8 +93,11 @@ struct HomeView: View {
     @EnvironmentObject private var offline: OfflineStore
     @EnvironmentObject private var settings: AppSettings
 
+    /// Per-feed scroll offsets, so swiping between categories doesn't lose your place.
+    @State private var scrollPositions: [HomeViewModel.Feed: ScrollPosition] = [:]
+
     private var feeds: [HomeViewModel.Feed] {
-        [.following, .latest, .hot] + followed.names.prefix(8).map {
+        [.latest, .following, .hot] + followed.names.prefix(8).map {
             .node(name: $0, title: NodeCatalog.displayName(for: $0))
         }
     }
@@ -98,14 +105,25 @@ struct HomeView: View {
     private var visibleTopics: [V2Topic] { blocks.filter(model.topics) }
 
     var body: some View {
-        content
-            .background(Theme.canvas)
-            .toolbar(.hidden, for: .navigationBar)
-            // Fixed header: title, actions and the feed rail never move.
-            .safeAreaBar(edge: .top, spacing: 0) { header }
-            .task {
-                await model.load(feed: .following, followedNodes: followed.names)
+        // One page per feed: swipe left/right to change category, the chip rail
+        // above stays in sync through the shared `model.feed` selection.
+        TabView(selection: $model.feed) {
+            ForEach(feeds, id: \.self) { feed in
+                feedPage(feed)
+                    .tag(feed)
             }
+        }
+        .tabViewStyle(.page(indexDisplayMode: .never))
+        .background(Theme.canvas)
+        .toolbar(.hidden, for: .navigationBar)
+        // Fixed header: title, actions and the feed rail never move.
+        .safeAreaBar(edge: .top, spacing: 0) { header }
+        .task {
+            await model.load(feed: .latest, followedNodes: followed.names)
+        }
+        .onChange(of: model.feed) { _, newFeed in
+            Task { await model.load(feed: newFeed, followedNodes: followed.names) }
+        }
     }
 
     private var header: some View {
@@ -119,20 +137,19 @@ struct HomeView: View {
         } accessory: {
             ChipRail(items: feeds) { feed in
                 FilterChip(title: feed.title, isSelected: model.feed == feed) {
-                    Task { await model.load(feed: feed, followedNodes: followed.names) }
+                    model.feed = feed
                 }
             }
         }
     }
 
-    @ViewBuilder
-    private var content: some View {
+    private func feedPage(_ feed: HomeViewModel.Feed) -> some View {
         ScrollView {
             LazyVStack(spacing: 10) {
                 if let message = model.errorMessage, visibleTopics.isEmpty {
                     EmptyStateCard(icon: "wifi.exclamationmark", title: "没能加载", message: message,
                                    actionTitle: "重试") {
-                        Task { await model.load(feed: model.feed, followedNodes: followed.names, force: true) }
+                        Task { await model.load(feed: feed, followedNodes: followed.names, force: true) }
                     }
                 } else if model.isLoading && visibleTopics.isEmpty {
                     LoadingCard()
@@ -145,7 +162,7 @@ struct HomeView: View {
                             CardSection(padding: 16) {
                                 FeaturedTopicCard(
                                     topic: featured,
-                                    badge: model.feed == .hot ? "今日最热" : "最新活跃"
+                                    badge: feed == .hot ? "今日最热" : "最新活跃"
                                 )
                             }
                         }
@@ -171,7 +188,15 @@ struct HomeView: View {
         .scrollIndicators(.hidden)
         .scrollEdgeEffectStyle(.soft, for: .bottom)
         .refreshable {
-            await model.load(feed: model.feed, followedNodes: followed.names, force: true)
+            await model.load(feed: feed, followedNodes: followed.names, force: true)
         }
+        .scrollPosition(scrollBinding(for: feed))
+    }
+
+    private func scrollBinding(for feed: HomeViewModel.Feed) -> Binding<ScrollPosition> {
+        Binding(
+            get: { scrollPositions[feed] ?? ScrollPosition() },
+            set: { scrollPositions[feed] = $0 }
+        )
     }
 }
