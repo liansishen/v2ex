@@ -134,7 +134,7 @@ struct SearchView: View {
     }
 
     private var scopeChips: some View {
-        ChipRail(items: SearchViewModel.Scope.allCases) { scope in
+        ChipRail(items: SearchViewModel.Scope.allCases, selected: model.scope) { scope in
             let count = scope == .topics && !model.hits.isEmpty ? " \(model.hits.count)" : ""
             FilterChip(title: scope.title + count, isSelected: model.scope == scope) {
                 model.scope = scope

@@ -218,19 +218,29 @@ struct FilterChip: View {
 }
 
 /// Horizontal chip rail with the design's 8pt gutters.
+/// 传入 `selected` 时，选中项变化会自动滚动到可视区中间（App Store 风格）。
 struct ChipRail<Item: Hashable, Label: View>: View {
     let items: [Item]
+    var selected: Item? = nil
     @ViewBuilder var label: (Item) -> Label
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(items, id: \.self, content: label)
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(items, id: \.self, content: label)
+                }
+                .padding(.horizontal, Theme.Metric.screenPadding)
+                .padding(.vertical, 8)
             }
-            .padding(.horizontal, Theme.Metric.screenPadding)
-            .padding(.vertical, 8)
+            .scrollClipDisabled()
+            .onChange(of: selected) { _, newValue in
+                guard let newValue else { return }
+                withAnimation(.snappy(duration: 0.3)) {
+                    proxy.scrollTo(newValue, anchor: .center)
+                }
+            }
         }
-        .scrollClipDisabled()
     }
 }
 

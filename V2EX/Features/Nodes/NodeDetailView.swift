@@ -209,7 +209,7 @@ struct NodeDetailView: View {
     }
 
     private var sortChips: some View {
-        ChipRail(items: NodeDetailViewModel.Sort.allCases) { sort in
+        ChipRail(items: NodeDetailViewModel.Sort.allCases, selected: model.sort) { sort in
             FilterChip(title: sort.title, isSelected: model.sort == sort) {
                 withAnimation(.snappy) { model.sort = sort }
             }

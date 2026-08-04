@@ -150,7 +150,7 @@ struct HomeView: View {
                 Image(systemName: "plus")
             }
         } accessory: {
-            ChipRail(items: feeds) { feed in
+            ChipRail(items: feeds, selected: model.feed) { feed in
                 FilterChip(title: feed.title, isSelected: model.feed == feed) {
                     model.feed = feed
                 }
