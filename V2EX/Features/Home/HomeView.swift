@@ -106,6 +106,8 @@ struct HomeView: View {
 
     /// Per-feed scroll offsets, so swiping between categories doesn't lose your place.
     @State private var scrollPositions: [HomeViewModel.Feed: ScrollPosition] = [:]
+    /// 只在首次出现时加载默认分类；从详情页返回时不再重置分类选择。
+    @State private var hasLoadedInitial = false
 
     private var feeds: [HomeViewModel.Feed] {
         [.latest, .following, .hot] + followed.names.prefix(8).map {
@@ -134,6 +136,8 @@ struct HomeView: View {
         // Fixed header: title, actions and the feed rail never move.
         .safeAreaBar(edge: .top, spacing: 0) { header }
         .task {
+            guard !hasLoadedInitial else { return }
+            hasLoadedInitial = true
             await model.load(feed: .latest, followedNodes: followed.names)
         }
         .onChange(of: model.feed) { _, newFeed in

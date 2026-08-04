@@ -610,6 +610,27 @@ extension V2EXClient {
         }
     }
 
+    /// 一次抓取话题页，同时解析浏览数与附言 —— 两者都来自同一个页面，
+    /// 分开请求会浪费一次完整的网页往返（热门帖首屏明显变慢）。
+    func topicPageExtras(id: Int, cookie: String) async throws -> (views: Int?, appends: [TopicAppend]) {
+        var request = URLRequest(url: URL(string: "https://www.v2ex.com/t/\(id)")!)
+        request.setValue(
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1",
+            forHTTPHeaderField: "User-Agent"
+        )
+        request.setValue(cookie, forHTTPHeaderField: "Cookie")
+        let (data, response) = try await webSession.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200,
+              let html = String(data: data, encoding: .utf8) else {
+            throw V2EXError.decoding("话题页加载失败：/t/\(id)")
+        }
+        var views: Int?
+        if let range = html.range(of: #"([\d,]+)\s*(?:views|次点击)"#, options: .regularExpression) {
+            views = Int(String(html[range]).filter(\.isNumber))
+        }
+        return (views, Self.extractAppends(from: html))
+    }
+
     /// 抓取楼主 APPEND（追加内容）。API 1.0/2.0 都不返回这个字段，
     /// 只能从网页话题页解析 `<div class="topic_append">` 块。
     /// 注意：V2EX 对未登录访问隐藏 APPEND，需要登录 cookie 才能抓到。

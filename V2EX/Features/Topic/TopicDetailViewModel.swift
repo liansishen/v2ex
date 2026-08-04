@@ -85,17 +85,21 @@ final class TopicDetailViewModel: ObservableObject {
                 // API 2.0 is the maintained surface — v1's replies endpoint
                 // returns stale/empty data for recent threads, so don't gate
                 // it behind the 100-reply long-thread heuristic.
+                // 热门帖分页并行拉取（各页独立），再按 id 恢复时间顺序。
+                let total = topic?.replies ?? 0
+                let pageCount = min(12, max(1, Int(ceil(Double(total) / 100.0))))
                 var collected: [V2Reply] = []
-                var page = 1
-                while collected.count < (topic?.replies ?? 0), page <= 12 {
-                    let batch = try await V2EXClient.shared.topicRepliesPaged(
-                        id: id, page: page, token: token
-                    )
-                    if batch.isEmpty { break }
-                    collected.append(contentsOf: batch)
-                    page += 1
+                try await withThrowingTaskGroup(of: [V2Reply].self) { group in
+                    for page in 1...pageCount {
+                        group.addTask {
+                            try await V2EXClient.shared.topicRepliesPaged(id: id, page: page, token: token)
+                        }
+                    }
+                    for try await batch in group {
+                        collected.append(contentsOf: batch)
+                    }
                 }
-                fetchedReplies = collected
+                fetchedReplies = collected.sorted { $0.id < $1.id }
             } else {
                 fetchedReplies = try await V2EXClient.shared.replies(topicID: id)
             }
@@ -106,23 +110,13 @@ final class TopicDetailViewModel: ObservableObject {
             repliesErrorMessage = (error as? V2EXError)?.errorDescription ?? error.localizedDescription
         }
 
-        // View counts aren't in any API — scrape the topic page once.
-        if topicViews == nil {
-            topicViews = await V2EXClient.shared.topicViews(id: id)
-        }
-
-        // APPEND 也只有网页有：有会话 cookie 时抓取（失败静默降级）。
-        if !cookie.isEmpty, appends.isEmpty {
-            print("[v2ex-appends] loading, cookie=\(cookie.count) chars")
-            do {
-                let fetched = try await V2EXClient.shared.topicAppends(id: id, cookie: cookie)
-                appends = fetched
-                print("[v2ex-appends] fetched=\(fetched.count)")
-            } catch {
-                print("[v2ex-appends] fetch error: \(error)")
+        // 浏览数与附言都来自同一个话题页 —— 一次网页抓取解析两者，
+        // 避免热门帖串行发两个网页请求拖慢首屏。
+        if topicViews == nil || (!cookie.isEmpty && appends.isEmpty) {
+            if let extras = try? await V2EXClient.shared.topicPageExtras(id: id, cookie: cookie) {
+                if topicViews == nil { topicViews = extras.views }
+                if !extras.appends.isEmpty { appends = extras.appends }
             }
-        } else if cookie.isEmpty {
-            print("[v2ex-appends] skipped, no cookie")
         }
     }
 
