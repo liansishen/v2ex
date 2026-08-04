@@ -125,9 +125,9 @@ struct ProfileView: View {
                 }
 
                 HStack(spacing: 8) {
-                    statTile(value: "\(model.recentTopics.count)", label: "话题")
-                    statTile(value: "\(favorites.topics.count)", label: "收藏")
-                    statTile(value: "\(offline.bundles.count)", label: "离线", tinted: true)
+                    statTile(value: "\(model.recentTopics.count)", label: "话题", destination: .myPosts)
+                    statTile(value: "\(favorites.topics.count)", label: "收藏", destination: .favorites)
+                    statTile(value: "\(offline.bundles.count)", label: "离线", tinted: true, destination: .offline)
                 }
             }
         }
@@ -140,18 +140,21 @@ struct ProfileView: View {
         return parts.isEmpty ? "V2EX 会员" : parts.joined(separator: " · ")
     }
 
-    private func statTile(value: String, label: String, tinted: Bool = false) -> some View {
-        VStack(spacing: 2) {
-            Text(value)
-                .font(.system(size: 19, weight: .bold))
-                .foregroundStyle(tinted ? Theme.amber : Theme.ink)
-            Text(label)
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.muted)
+    private func statTile(value: String, label: String, tinted: Bool = false, destination: Route) -> some View {
+        NavigationLink(value: destination) {
+            VStack(spacing: 2) {
+                Text(value)
+                    .font(.system(size: 19, weight: .bold))
+                    .foregroundStyle(tinted ? Theme.amber : Theme.ink)
+                Text(label)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.muted)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(Theme.inset, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 10)
-        .background(Theme.inset, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .buttonStyle(.row)
     }
 
     private var signedOutCard: some View {
