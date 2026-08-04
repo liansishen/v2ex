@@ -18,6 +18,7 @@ final class TopicDetailViewModel: ObservableObject {
     @Published private(set) var replies: [ThreadedReply] = []
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
+    @Published private(set) var repliesErrorMessage: String?
     @Published private(set) var loadedFromOffline = false
     @Published private(set) var topicViews: Int?
     @Published var filter: ReplyFilter = .byFloor
@@ -52,6 +53,7 @@ final class TopicDetailViewModel: ObservableObject {
     func load(id: Int, token: String, offline: OfflineStore) async {
         isLoading = true
         errorMessage = nil
+        repliesErrorMessage = nil
         defer { isLoading = false }
 
         // A saved topic renders immediately, then refreshes if the network is up.
@@ -63,16 +65,27 @@ final class TopicDetailViewModel: ObservableObject {
         }
 
         do {
-            let fetched = try await V2EXClient.shared.topic(id: id)
+            let fetched = try await V2EXClient.shared.topic(id: id, token: token)
             topic = fetched
             loadedFromOffline = false
+        } catch {
+            if topic == nil {
+                errorMessage = (error as? V2EXError)?.errorDescription ?? error.localizedDescription
+            }
+            return
+        }
 
+        // Replies are a separate request — a failure here must not masquerade
+        // as "no replies" on a thread that clearly has some.
+        do {
             let fetchedReplies: [V2Reply]
-            if !token.isEmpty, fetched.replies > 100 {
-                // Long threads need API 2.0's pagination — v1 caps out.
+            if !token.isEmpty {
+                // API 2.0 is the maintained surface — v1's replies endpoint
+                // returns stale/empty data for recent threads, so don't gate
+                // it behind the 100-reply long-thread heuristic.
                 var collected: [V2Reply] = []
                 var page = 1
-                while collected.count < fetched.replies, page <= 12 {
+                while collected.count < (topic?.replies ?? 0), page <= 12 {
                     let batch = try await V2EXClient.shared.topicRepliesPaged(
                         id: id, page: page, token: token
                     )
@@ -86,15 +99,14 @@ final class TopicDetailViewModel: ObservableObject {
             }
 
             rawReplies = fetchedReplies
-            replies = Self.thread(fetchedReplies, authorName: fetched.authorName)
-            // View counts aren't in any API — scrape the topic page once.
-            if topicViews == nil {
-                topicViews = await V2EXClient.shared.topicViews(id: id)
-            }
+            replies = Self.thread(fetchedReplies, authorName: topic?.authorName ?? "")
         } catch {
-            if topic == nil {
-                errorMessage = (error as? V2EXError)?.errorDescription ?? error.localizedDescription
-            }
+            repliesErrorMessage = (error as? V2EXError)?.errorDescription ?? error.localizedDescription
+        }
+
+        // View counts aren't in any API — scrape the topic page once.
+        if topicViews == nil {
+            topicViews = await V2EXClient.shared.topicViews(id: id)
         }
     }
 

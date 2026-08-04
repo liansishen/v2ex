@@ -202,6 +202,30 @@ struct TopicDetailView: View {
         if items.isEmpty {
             if model.isLoading {
                 LoadingCard()
+            } else if let message = model.repliesErrorMessage {
+                EmptyStateCard(
+                    icon: "exclamationmark.triangle",
+                    title: "没能加载回复",
+                    message: message,
+                    actionTitle: "重试"
+                ) {
+                    Task { await model.load(id: topicID, token: token.token, offline: offline) }
+                }
+            } else if !token.hasToken, (model.topic?.replies ?? 0) > 0 {
+                // v1's replies endpoint returns empty data for recent threads —
+                // guide the user to the API 2.0 path instead of "no replies".
+                EmptyStateCard(
+                    icon: "key",
+                    title: "回复未能加载",
+                    message: "这个帖有回复，但 V2EX 旧版接口不返回新帖的回复数据，填入 Access Token 后即可查看。",
+                    actionTitle: "去设置"
+                ) { }
+                .overlay {
+                    NavigationLink(value: Route.tokenSetup) {
+                        Color.clear.contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
             } else {
                 EmptyStateCard(icon: "bubble.left", title: "还没有回复")
             }

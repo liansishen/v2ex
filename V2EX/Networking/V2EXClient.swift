@@ -73,7 +73,16 @@ actor V2EXClient {
         try await getV1("/api/topics/show.json", query: ["username": username])
     }
 
-    func topic(id: Int) async throws -> V2Topic {
+    /// 话题详情：有 token 优先 API 2.0（维护中的接口，数据新鲜），
+    /// 2.0 失败或无 token 回退 1.0。
+    func topic(id: Int, token: String = "") async throws -> V2Topic {
+        if !token.isEmpty, let v2 = try? await topicV2(id: id, token: token) {
+            return v2
+        }
+        return try await topicV1(id: id)
+    }
+
+    private func topicV1(id: Int) async throws -> V2Topic {
         // v1 returns a single-element array here.
         let results: [V2Topic] = try await getV1("/api/topics/show.json", query: ["id": String(id)])
         guard let topic = results.first else { throw V2EXError.decoding("话题不存在或已删除") }
@@ -101,6 +110,12 @@ actor V2EXClient {
     /// Node topics with pagination — only API 2.0 offers `p`.
     func nodeTopicsPaged(name: String, page: Int, token: String) async throws -> [V2Topic] {
         try await getV2("/api/v2/nodes/\(name)/topics", query: ["p": String(page)], token: token)
+    }
+
+    /// Single topic via API 2.0 — v1's endpoints are unmaintained and return
+    /// stale data for recent threads.
+    private func topicV2(id: Int, token: String) async throws -> V2Topic {
+        try await getV2("/api/v2/topics/\(id)", query: [:], token: token)
     }
 
     func topicRepliesPaged(id: Int, page: Int, token: String) async throws -> [V2Reply] {
