@@ -36,6 +36,7 @@ enum Route: Hashable {
     case settings
     case appearance
     case tokenSetup
+    case v2exLogin
 }
 
 struct RootView: View {
@@ -130,6 +131,7 @@ struct RootView: View {
         case .settings: SettingsView()
         case .appearance: AppearanceSettingsView()
         case .tokenSetup: TokenSetupView()
+        case .v2exLogin: V2EXLoginView()
         }
     }
 }

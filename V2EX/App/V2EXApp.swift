@@ -4,6 +4,7 @@ import SwiftUI
 struct V2EXApp: App {
     @StateObject private var settings = AppSettings()
     @StateObject private var token = TokenStore()
+    @StateObject private var session = V2EXSessionStore()
     @StateObject private var followed = FollowedNodesStore()
     @StateObject private var readState = ReadStateStore()
     @StateObject private var favorites = FavoritesStore()
@@ -17,6 +18,7 @@ struct V2EXApp: App {
             RootView()
                 .environmentObject(settings)
                 .environmentObject(token)
+                .environmentObject(session)
                 .environmentObject(followed)
                 .environmentObject(readState)
                 .environmentObject(favorites)

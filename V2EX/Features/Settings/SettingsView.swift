@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var token: TokenStore
+    @EnvironmentObject private var session: V2EXSessionStore
     @EnvironmentObject private var offline: OfflineStore
     @Environment(\.openURL) private var openURL
 
@@ -23,6 +24,17 @@ struct SettingsView: View {
                             iconColor: Theme.accent,
                             title: "Access Token",
                             subtitle: token.hasToken ? "已连接" : "未设置"
+                        ) { Chevron() }
+                    }
+                    .buttonStyle(.plain)
+                    RowSeparator(leadingInset: 58)
+
+                    NavigationLink(value: Route.v2exLogin) {
+                        SettingsRow(
+                            icon: "person.badge.key.fill",
+                            iconColor: Theme.accent,
+                            title: "V2EX 登录",
+                            subtitle: session.isLoggedIn ? "\(session.username) · 已登录" : "未登录（用于 app 内回复）"
                         ) { Chevron() }
                     }
                     .buttonStyle(.plain)
