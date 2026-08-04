@@ -1,9 +1,9 @@
 name: iOS Unsigned Build
 
 # 无签名编译：仅验证工程可编译，不产生可安装到真机的签名包。
-# 真机安装/TestFlight 需要开发者证书，不在本 workflow 范围内。
-# push 到 main 后会把无签名构建包发布到 nightly Release（每次覆盖更新）；
-# 打 v* 标签时发布对应版本的 Release。
+# 产出未签名 .ipa（真机 Release），可自行用免费 Apple ID 重签名后侧载安装
+# （如 Sideloadly、AltStore、爱思助手等工具）。
+# push 到 main 后发布到 nightly Release（每次覆盖更新）；打 v* 标签时发布对应版本。
 
 on:
   push:
@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build (unsigned)
+    name: Build unsigned IPA
     runs-on: macos-15
     steps:
       - name: Checkout
@@ -33,18 +33,6 @@ jobs:
           sudo xcode-select -s "/Applications/$XCODE_APP"
           xcodebuild -version
 
-      - name: Show schemes
-        run: xcodebuild -project V2EX.xcodeproj -list
-
-      - name: Build for iOS Simulator (Debug, no signing)
-        run: |
-          xcodebuild -project V2EX.xcodeproj -scheme V2EX \
-            -configuration Debug \
-            -destination 'generic/platform=iOS Simulator' \
-            -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO \
-            build
-
       - name: Build for iOS Device (Release, unsigned)
         run: |
           xcodebuild -project V2EX.xcodeproj -scheme V2EX \
@@ -56,25 +44,18 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             build
 
-      - name: Package app bundles
+      - name: Package unsigned IPA
         run: |
-          cd build/Build/Products
-          ditto -c -k --sequesterRsrc --keepParent "Debug-iphonesimulator/V2EX.app" V2EX-simulator.app.zip
-          ditto -c -k --sequesterRsrc --keepParent "Release-iphoneos/V2EX.app" V2EX-device-unsigned.app.zip
-          ls -lh
+          mkdir -p Payload
+          ditto "build/Build/Products/Release-iphoneos/V2EX.app" "Payload/V2EX.app"
+          ditto -c -k --sequesterRsrc --keepParent Payload V2EX.ipa
+          ls -lh V2EX.ipa
 
-      - name: Upload simulator build
+      - name: Upload unsigned IPA
         uses: actions/upload-artifact@v4
         with:
-          name: V2EX-simulator
-          path: build/Build/Products/V2EX-simulator.app.zip
-          if-no-files-found: error
-
-      - name: Upload unsigned device build
-        uses: actions/upload-artifact@v4
-        with:
-          name: V2EX-device-unsigned
-          path: build/Build/Products/V2EX-device-unsigned.app.zip
+          name: V2EX-unsigned-ipa
+          path: V2EX.ipa
           if-no-files-found: error
 
   release:
@@ -114,7 +95,7 @@ jobs:
           gh release delete nightly --yes 2>/dev/null || true
           gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/nightly" 2>/dev/null || true
 
-      - name: Create release with unsigned builds
+      - name: Create release with unsigned IPA
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -122,4 +103,4 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --title "${{ steps.meta.outputs.name }}" \
             --target "$GITHUB_SHA" \
-            --notes "由 CI 自动生成的无签名构建（模拟器 Debug + 真机未签名 Release）。Commit: \`$GITHUB_SHA\`"
+            --notes "未签名 IPA（Commit: \`$GITHUB_SHA\`）。需使用免费 Apple ID 重签名后侧载安装（如 Sideloadly、AltStore、爱思助手等）。"
