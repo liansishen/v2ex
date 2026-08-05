@@ -33,6 +33,8 @@ targets:
     platform: iOS
     sources:
       - path: V2EX
+        excludes:
+          - IconSources
     dependencies:
       - package: SandboxServer
         product: SandboxServer
@@ -41,7 +43,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.vibe.v2ex
         PRODUCT_NAME: V2EX
         INFOPLIST_FILE: V2EX/Info.plist
-        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_APPICON_NAME: V2EX
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_EMIT_LOC_STRINGS: YES
         GENERATE_INFOPLIST_FILE: NO

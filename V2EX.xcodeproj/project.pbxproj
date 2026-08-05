@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		15B0CF068B12A4E6FA4D407E /* V2EX.icon in Resources */ = {isa = PBXBuildFile; fileRef = 25EE905BC783A14059F53387 /* V2EX.icon */; };
 		1F78C3DC3E570CB4FB4DEB28 /* HTMLContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B81F6BD7C210C928142B5902 /* HTMLContent.swift */; };
 		355D84D49DE8FA4465BB2F82 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 952ED920E11A6B7AB4548070 /* SettingsView.swift */; };
 		3F10E077948FD545934D8D7B /* TopicDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0176AD9191E201E0966293F /* TopicDetailView.swift */; };
@@ -41,6 +42,7 @@
 /* Begin PBXFileReference section */
 		1BCBFD2B30842891D7861534 /* V2EXClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = V2EXClient.swift; sourceTree = "<group>"; };
 		1F88CCAC289B75CC5650EB33 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		25EE905BC783A14059F53387 /* V2EX.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = V2EX.icon; sourceTree = "<group>"; };
 		34A54260B991107B0AFF2A4B /* SubViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SubViews.swift; sourceTree = "<group>"; };
 		47C86804E76925BACA4F4F28 /* Stores.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Stores.swift; sourceTree = "<group>"; };
 		50B21E0D3A7CFBEE8C6B7BAC /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
@@ -185,6 +187,7 @@
 			children = (
 				1F88CCAC289B75CC5650EB33 /* Assets.xcassets */,
 				AA163B321D247F9F88706930 /* Info.plist */,
+				25EE905BC783A14059F53387 /* V2EX.icon */,
 				D894CB743A45614B56A205DA /* App */,
 				6C563CC8C69471274F7E783D /* DesignSystem */,
 				6E62437875A4050D3EA9066D /* Features */,
@@ -313,6 +316,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				98FA67B2046C4A5E714DBCE9 /* Assets.xcassets in Resources */,
+				15B0CF068B12A4E6FA4D407E /* V2EX.icon in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -359,7 +363,7 @@
 		43A20A3C6E92768EF93D82A8 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = V2EX;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = V2EX/Info.plist;
@@ -446,7 +450,7 @@
 		7840382923930D7D2BF9C87F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = V2EX;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = V2EX/Info.plist;
