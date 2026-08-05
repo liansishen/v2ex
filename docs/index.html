@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#087a5b">
   <meta name="description" content="V2EX for iOS，一款为 iOS 26 设计的 V2EX 客户端。">
   <title>V2EX for iOS</title>
-  <link rel="icon" type="image/png" href="app-icon.png">
+  <link rel="icon" type="image/png" href="app-icon.png?v=20260805">
   <style>
     :root {
       color-scheme: light;
@@ -94,12 +94,23 @@
 
     .hero-visual {
       position: absolute;
-      inset: 0;
+      inset: 72px 0 0;
       z-index: -2;
-      background-image: url("screenshots/V2EX_screenshots.png");
-      background-position: center 72px;
-      background-size: cover;
-      background-repeat: no-repeat;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      gap: clamp(14px, 2vw, 28px);
+      overflow: hidden;
+      padding: 24px max(20px, calc((100vw - 1360px) / 2));
+    }
+
+    .hero-shot {
+      width: clamp(210px, 22vw, 320px);
+      height: auto;
+      flex: 0 0 auto;
+      border: 1px solid rgba(18, 23, 20, 0.08);
+      border-radius: clamp(32px, 3vw, 48px);
+      box-shadow: 0 18px 38px rgba(18, 23, 20, 0.18);
     }
 
     .hero-copy {
@@ -247,9 +258,18 @@
       }
 
       .hero-visual {
-        background-image: url("screenshots/home.png");
-        background-position: center 64px;
-        background-size: cover;
+        inset: 64px 0 0;
+        padding: 16px 28px;
+      }
+
+      .hero-shot {
+        display: none;
+        width: min(84vw, 390px);
+        border-radius: 40px;
+      }
+
+      .hero-shot:first-child {
+        display: block;
       }
 
       .hero-copy {
@@ -309,7 +329,7 @@
 <body>
   <header class="site-header">
     <a class="brand" href="#top" aria-label="返回顶部">
-      <img src="app-icon.png" alt="">
+      <img src="app-icon.png?v=20260805" alt="">
       <span>V2EX for iOS</span>
     </a>
     <a class="github-link" href="https://github.com/xinghelee/v2ex">GitHub</a>
@@ -317,7 +337,12 @@
 
   <main id="top">
     <section class="hero" aria-labelledby="hero-title">
-      <div class="hero-visual" role="img" aria-label="V2EX iOS 客户端界面截图"></div>
+      <div class="hero-visual" aria-label="V2EX iOS 客户端界面截图">
+        <img class="hero-shot" src="screenshots/home-hd.png" width="1320" height="2868" alt="V2EX 首页" fetchpriority="high">
+        <img class="hero-shot" src="screenshots/topic-hd.png" width="1320" height="2868" alt="V2EX 话题详情">
+        <img class="hero-shot" src="screenshots/nodes-hd.png" width="1320" height="2868" alt="V2EX 节点目录">
+        <img class="hero-shot" src="screenshots/profile-hd.png" width="1320" height="2868" alt="V2EX 个人页面">
+      </div>
       <div class="hero-copy">
         <p class="eyebrow">为 iOS 26 设计</p>
         <h1 id="hero-title">V2EX</h1>

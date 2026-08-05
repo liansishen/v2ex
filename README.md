@@ -4,7 +4,12 @@
 
 ## 截图
 
-<img src="docs/screenshots/V2EX_screenshots.png" alt="V2EX 界面总览" width="100%"/>
+<p align="center">
+  <img src="docs/screenshots/home-hd.png" alt="V2EX 首页" width="24%"/>
+  <img src="docs/screenshots/topic-hd.png" alt="V2EX 话题详情" width="24%"/>
+  <img src="docs/screenshots/nodes-hd.png" alt="V2EX 节点目录" width="24%"/>
+  <img src="docs/screenshots/profile-hd.png" alt="V2EX 个人页面" width="24%"/>
+</p>
 
 ## 功能
 
