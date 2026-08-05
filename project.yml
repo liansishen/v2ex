@@ -9,13 +9,22 @@ options:
   createIntermediateGroups: true
   generateEmptyDirectories: false
 
+packages:
+  # DEBUG-only sandbox debugging SDK: network capture / file browser / SQLite /
+  # logs / MCP bridge. Release builds link a no-op facade, so this is safe.
+  SandboxServer:
+    url: https://github.com/xinghelee/SandboxServer.git
+    from: 0.1.0
+    traits:
+      - SandboxServerEnabled
+
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    DEVELOPMENT_TEAM: ""
+    DEVELOPMENT_TEAM: "99LYH6FNPS"
     CODE_SIGN_STYLE: Automatic
     MARKETING_VERSION: "1.0"
-    CURRENT_PROJECT_VERSION: "5"
+    CURRENT_PROJECT_VERSION: "11"
     ENABLE_USER_SCRIPT_SANDBOXING: YES
 
 targets:
@@ -24,12 +33,17 @@ targets:
     platform: iOS
     sources:
       - path: V2EX
+        excludes:
+          - IconSources
+    dependencies:
+      - package: SandboxServer
+        product: SandboxServer
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.vibe.v2ex
         PRODUCT_NAME: V2EX
         INFOPLIST_FILE: V2EX/Info.plist
-        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_APPICON_NAME: V2EX
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_EMIT_LOC_STRINGS: YES
         GENERATE_INFOPLIST_FILE: NO

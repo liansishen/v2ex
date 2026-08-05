@@ -5,12 +5,22 @@ struct TopicDetailView: View {
 
     @StateObject private var model = TopicDetailViewModel()
     @EnvironmentObject private var token: TokenStore
+    @EnvironmentObject private var topicCache: TopicDetailCacheStore
     @EnvironmentObject private var offline: OfflineStore
     @EnvironmentObject private var favorites: FavoritesStore
     @EnvironmentObject private var readState: ReadStateStore
     @EnvironmentObject private var settings: AppSettings
+    @EnvironmentObject private var session: V2EXSessionStore
     @Environment(\.openURL) private var openURL
     @Environment(\.dismiss) private var dismiss
+
+    @State private var replyDraft = ""
+    @State private var replyError: String?
+    @State private var showReplyError = false
+    @State private var isSending = false
+    @State private var isSyncingFavorite = false
+    @State private var isComposerHidden = false
+    @FocusState private var composerFocused: Bool
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -37,6 +47,17 @@ struct TopicDetailView: View {
                     .padding(.bottom, 110)
                 }
                 .scrollIndicators(.hidden)
+                .scrollDismissesKeyboard(.interactively)
+                .simultaneousGesture(composerVisibilityGesture)
+                .pullToRefresh {
+                    await model.load(
+                        id: topicID,
+                        token: token.token,
+                        cookie: session.cookie,
+                        cache: topicCache,
+                        offline: offline
+                    )
+                }
                 .onChange(of: model.replies.count) { _, count in
                     guard settings.rememberReadingPosition, count > 0,
                           let floor = readState.position(for: topicID), floor > 1 else { return }
@@ -48,6 +69,11 @@ struct TopicDetailView: View {
             }
 
             replyComposer
+                .offset(y: isComposerHidden ? 110 : 0)
+                .opacity(isComposerHidden ? 0 : 1)
+                .allowsHitTesting(!isComposerHidden)
+                .accessibilityHidden(isComposerHidden)
+                .animation(.snappy(duration: 0.24), value: isComposerHidden)
         }
         .navigationBarTitleDisplayMode(.inline)
         // The floating reply composer owns the bottom of this screen.
@@ -55,7 +81,13 @@ struct TopicDetailView: View {
         .toolbar { toolbarContent }
         .task {
             readState.markRead(topicID)
-            await model.load(id: topicID, token: token.token, offline: offline)
+            await model.load(
+                id: topicID,
+                token: token.token,
+                cookie: session.cookie,
+                cache: topicCache,
+                offline: offline
+            )
         }
     }
 
@@ -75,11 +107,37 @@ struct TopicDetailView: View {
         ToolbarItem(placement: .topBarTrailing) {
             HStack(spacing: 16) {
                 Button {
-                    if let topic = model.topic { favorites.toggle(topic) }
+                    guard let topic = model.topic, !isSyncingFavorite else { return }
+                    if session.isLoggedIn {
+                        // 已登录：星标转 loading，V2EX 同步完成后再更新状态。
+                        isSyncingFavorite = true
+                        Task {
+                            do {
+                                let newState = try await V2EXClient.shared.toggleFavorite(
+                                    topicID: topic.id, cookie: session.cookie
+                                )
+                                if newState != favorites.contains(topic.id) {
+                                    favorites.toggle(topic)  // 服务器最终状态为准
+                                }
+                            } catch {
+                                // 同步失败：保持原状态。
+                            }
+                            isSyncingFavorite = false
+                        }
+                    } else {
+                        favorites.toggle(topic)
+                    }
                 } label: {
-                    Image(systemName: favorites.contains(topicID) ? "star.fill" : "star")
-                        .foregroundStyle(favorites.contains(topicID) ? Theme.amber : Theme.body)
+                    Group {
+                        if isSyncingFavorite {
+                            ProgressView().controlSize(.small).tint(Theme.body)
+                        } else {
+                            Image(systemName: favorites.contains(topicID) ? "star.fill" : "star")
+                                .foregroundStyle(favorites.contains(topicID) ? Theme.amber : Theme.body)
+                        }
+                    }
                 }
+                .disabled(isSyncingFavorite)
                 Menu {
                     Button {
                         toggleOffline()
@@ -124,28 +182,30 @@ struct TopicDetailView: View {
                     .foregroundStyle(Theme.ink)
                     .fixedSize(horizontal: false, vertical: true)
 
-                HStack(spacing: 9) {
+                HStack(spacing: 10) {
                     NavigationLink(value: Route.member(topic.authorName)) {
-                        HStack(spacing: 9) {
-                            IdentitySquare(text: topic.authorName, size: 30, imageURL: topic.member?.avatarURL)
-                            VStack(alignment: .leading, spacing: 0) {
+                        HStack(spacing: 10) {
+                            IdentitySquare(text: topic.authorName, size: 34, imageURL: topic.member?.avatarURL)
+                            VStack(alignment: .leading, spacing: 2) {
                                 Text(topic.authorName)
-                                    .font(.system(size: 14, weight: .medium))
+                                    .font(.system(size: 14, weight: .semibold))
                                     .foregroundStyle(Theme.ink)
+                                    .lineLimit(1)
                                 Text(RelativeTime.string(from: topic.activityDate))
                                     .font(.system(size: 12))
                                     .foregroundStyle(Theme.muted)
-                                if let views = model.topicViews {
-                                    Text("\(views.formatted()) 次阅读")
-                                        .font(.system(size: 12))
-                                        .foregroundStyle(Theme.muted)
-                                }
                             }
                         }
                     }
                     .buttonStyle(.plain)
 
                     Spacer(minLength: 4)
+                    if let views = model.topicViews {
+                        Label(views.formatted(), systemImage: "eye")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Theme.muted)
+                            .accessibilityLabel("\(views.formatted()) 次阅读")
+                    }
                     if offline.isOffline(topicID) { OfflineBadge() }
                 }
 
@@ -158,6 +218,36 @@ struct TopicDetailView: View {
                         .foregroundStyle(Theme.muted)
                 } else {
                     ContentBlocksView(blocks: blocks)
+                }
+
+                // 楼主 APPEND：网页抓取，API 不返回。
+                if !model.appends.isEmpty {
+                    ForEach(model.appends, id: \.self) { append in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label(
+                                "楼主 \(append.timeLabel.isEmpty ? "补充" : append.timeLabel) 补充",
+                                systemImage: "plus.bubble"
+                            )
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Theme.accent)
+
+                            let appendBlocks = model.contentBlocks(for: append)
+                            if appendBlocks.isEmpty {
+                                Text(append.content)
+                                    .font(.system(size: 15))
+                                    .foregroundStyle(Theme.ink)
+                            } else {
+                                ContentBlocksView(blocks: appendBlocks)
+                            }
+                        }
+                        .padding(.top, 10)
+                        .padding(.leading, 12)
+                        .overlay(alignment: .leading) {
+                            Rectangle()
+                                .fill(Theme.accent.opacity(0.35))
+                                .frame(width: 2.5)
+                        }
+                    }
                 }
             }
         }
@@ -209,7 +299,15 @@ struct TopicDetailView: View {
                     message: message,
                     actionTitle: "重试"
                 ) {
-                    Task { await model.load(id: topicID, token: token.token, offline: offline) }
+                    Task {
+                        await model.load(
+                            id: topicID,
+                            token: token.token,
+                            cookie: session.cookie,
+                            cache: topicCache,
+                            offline: offline
+                        )
+                    }
                 }
             } else if !token.hasToken, (model.topic?.replies ?? 0) > 0 {
                 // v1's replies endpoint returns empty data for recent threads —
@@ -230,9 +328,13 @@ struct TopicDetailView: View {
                 EmptyStateCard(icon: "bubble.left", title: "还没有回复")
             }
         } else {
-            CardSection {
-                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                    ReplyRow(item: item)
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                VStack(alignment: .leading, spacing: 0) {
+                    ReplyRow(item: item, onReply: { mention in
+                        setComposerHidden(false)
+                        replyDraft = mention
+                        composerFocused = true
+                    })
                         .id(item.id)
                         .onAppear {
                             guard settings.rememberReadingPosition else { return }
@@ -242,44 +344,136 @@ struct TopicDetailView: View {
                         RowSeparator(leadingInset: 59)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.card)
+                .clipShape(
+                    UnevenRoundedRectangle(
+                        topLeadingRadius: index == 0 ? Theme.Metric.cardRadius : 0,
+                        bottomLeadingRadius: index == items.count - 1 ? Theme.Metric.cardRadius : 0,
+                        bottomTrailingRadius: index == items.count - 1 ? Theme.Metric.cardRadius : 0,
+                        topTrailingRadius: index == 0 ? Theme.Metric.cardRadius : 0,
+                        style: .continuous
+                    )
+                )
+                .padding(.horizontal, Theme.Metric.screenPadding)
+                .padding(.top, index == 0 ? 0 : -10)
             }
         }
     }
 
     // MARK: Composer
 
+    private var composerVisibilityGesture: some Gesture {
+        DragGesture(minimumDistance: 8)
+            .onChanged { value in
+                if value.translation.height < -18 {
+                    setComposerHidden(true)
+                } else if value.translation.height > 18 {
+                    setComposerHidden(false)
+                }
+            }
+    }
+
+    private func setComposerHidden(_ hidden: Bool) {
+        guard hidden != isComposerHidden, !(hidden && isSending) else { return }
+        if hidden { composerFocused = false }
+        isComposerHidden = hidden
+    }
+
     /// Floating Liquid Glass composer. The field and the send button live in one
     /// GlassEffectContainer so their glass blends instead of stacking.
+    /// 已登录（网页会话）时直接在 app 内输入并发送；未登录时跳网页版。
     private var replyComposer: some View {
         GlassEffectContainer(spacing: 12) {
-            HStack(spacing: 12) {
-                Text("写下你的回复…")
-                    .font(.system(size: 16))
-                    .foregroundStyle(Theme.muted)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.leading, 18)
-                    .padding(.trailing, 12)
-                    .padding(.vertical, 14)
-                    .glassEffect(.regular.interactive(), in: .capsule)
-                    .onTapGesture {
-                        // API 2.0 has no reply endpoint — hand off to the web composer.
-                        openURL(URL(string: "https://www.v2ex.com/t/\(topicID)#reply")!)
-                    }
+            if session.isLoggedIn {
+                HStack(alignment: .bottom, spacing: 12) {
+                    TextField("写下你的回复…", text: $replyDraft, axis: .vertical)
+                        .lineLimit(1...6)
+                        .font(.system(size: 16))
+                        .focused($composerFocused)
+                        .submitLabel(.send)
+                        .onSubmit { Task { await sendReply() } }
+                        .padding(.leading, 18)
+                        .padding(.trailing, 12)
+                        .padding(.vertical, 14)
+                        .glassEffect(.regular.interactive(), in: .capsule)
 
-                Button {
-                    openURL(URL(string: "https://www.v2ex.com/t/\(topicID)#reply")!)
-                } label: {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 48, height: 48)
+                    Button {
+                        Task { await sendReply() }
+                    } label: {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 15, weight: .bold))
+                            .frame(width: 22, height: 22)
+                    }
+                    .buttonStyle(.glassProminent)
+                    .buttonBorderShape(.circle)
+                    .controlSize(.large)
+                    .tint(Theme.accent)
+                    .disabled(isSending || replyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-                .buttonStyle(.plain)
-                .glassEffect(.regular.tint(Theme.accent).interactive(), in: .circle)
+            } else {
+                HStack(spacing: 12) {
+                    Text("写下你的回复…（未登录将打开网页版）")
+                        .font(.system(size: 15))
+                        .foregroundStyle(Theme.muted)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.leading, 18)
+                        .padding(.trailing, 12)
+                        .padding(.vertical, 14)
+                        .glassEffect(.regular.interactive(), in: .capsule)
+                        .onTapGesture {
+                            // API 2.0 has no reply endpoint — hand off to the web composer.
+                            openURL(URL(string: "https://www.v2ex.com/t/\(topicID)#reply")!)
+                        }
+
+                    Button {
+                        openURL(URL(string: "https://www.v2ex.com/t/\(topicID)#reply")!)
+                    } label: {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 15, weight: .bold))
+                            .frame(width: 22, height: 22)
+                    }
+                    .buttonStyle(.glassProminent)
+                    .buttonBorderShape(.circle)
+                    .controlSize(.large)
+                    .tint(Theme.accent)
+                }
             }
         }
         .padding(.horizontal, Theme.Metric.screenPadding)
         .padding(.bottom, 8)
+        .alert("回复失败", isPresented: $showReplyError) {
+            Button("好", role: .cancel) { }
+        } message: {
+            Text(replyError ?? "")
+        }
+    }
+
+    private func sendReply() async {
+        let content = replyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !content.isEmpty, !isSending else { return }
+        isSending = true
+        defer { isSending = false }
+        do {
+            try await V2EXClient.shared.reply(topicID: topicID, content: content, cookie: session.cookie)
+            replyDraft = ""
+            composerFocused = false
+            await model.load(
+                id: topicID,
+                token: token.token,
+                cookie: session.cookie,
+                cache: topicCache,
+                offline: offline
+            )
+        } catch {
+            // 回复失败不再清登录状态：一次失败不代表会话失效，由用户决定何时退出。
+            if case V2EXError.sessionExpired = error {
+                replyError = "网页会话可能已失效，请到设置里重新登录 V2EX。"
+            } else {
+                replyError = (error as? V2EXError)?.errorDescription ?? error.localizedDescription
+            }
+            showReplyError = true
+        }
     }
 }
 
@@ -287,6 +481,7 @@ struct TopicDetailView: View {
 
 struct ReplyRow: View {
     let item: ThreadedReply
+    var onReply: ((String) -> Void)? = nil
     @EnvironmentObject private var settings: AppSettings
 
     var body: some View {
@@ -321,6 +516,18 @@ struct ReplyRow: View {
                     Text("#\(item.floor)")
                         .font(.system(size: 11))
                         .foregroundStyle(Theme.faint)
+                    if let onReply {
+                        Button {
+                            onReply("@\(item.reply.authorName) #\(item.floor) ")
+                        } label: {
+                            Image(systemName: "arrowshape.turn.up.left")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Theme.accent)
+                                .frame(width: 32, height: 32)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
 
                 if let quoted = item.quoted {
@@ -330,7 +537,7 @@ struct ReplyRow: View {
                 // Block renderer, not inline: replies can carry images, and
                 // the inline path collapses `<img>` to a "[图片]" link.
                 ContentBlocksView(
-                    blocks: HTMLText.blocks(from: TopicDetailViewModel.bodyWithoutQuotePrefix(item)),
+                    blocks: item.contentBlocks,
                     fontSize: settings.bodyFontSize - 1,
                     lineSpacing: settings.bodyLineSpacing * 0.75
                 )

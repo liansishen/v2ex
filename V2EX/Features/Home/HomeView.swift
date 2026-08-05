@@ -3,22 +3,22 @@ import SwiftUI
 @MainActor
 final class HomeViewModel: ObservableObject {
     enum Feed: Hashable {
+        case all
         case following
-        case latest
         case hot
         case node(name: String, title: String)
 
         var title: String {
             switch self {
+            case .all: return "全部"
             case .following: return "关注"
-            case .latest: return "最新"
-            case .hot: return "热门"
+            case .hot: return "最热"
             case .node(_, let title): return title
             }
         }
     }
 
-    @Published var feed: Feed = .latest
+    @Published var feed: Feed = .all
     @Published private(set) var topics: [V2Topic] = []
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
@@ -41,7 +41,7 @@ final class HomeViewModel: ObservableObject {
         do {
             let result: [V2Topic]
             switch feed {
-            case .latest:
+            case .all:
                 result = try await V2EXClient.shared.latestTopics()
             case .hot:
                 result = try await V2EXClient.shared.hotTopics()
@@ -95,7 +95,6 @@ final class HomeViewModel: ObservableObject {
 
 struct HomeView: View {
     var onCompose: () -> Void
-    var onSearch: () -> Void
 
     @StateObject private var model = HomeViewModel()
     @EnvironmentObject private var followed: FollowedNodesStore
@@ -106,9 +105,11 @@ struct HomeView: View {
 
     /// Per-feed scroll offsets, so swiping between categories doesn't lose your place.
     @State private var scrollPositions: [HomeViewModel.Feed: ScrollPosition] = [:]
+    /// 只在首次出现时加载默认分类；从详情页返回时不再重置分类选择。
+    @State private var hasLoadedInitial = false
 
     private var feeds: [HomeViewModel.Feed] {
-        [.latest, .following, .hot] + followed.names.prefix(8).map {
+        [.all, .hot, .following] + followed.names.prefix(8).map {
             .node(name: $0, title: NodeCatalog.displayName(for: $0))
         }
     }
@@ -130,31 +131,36 @@ struct HomeView: View {
         // Let the feed scroll under the floating tab bar instead of stopping above it.
         .ignoresSafeArea(edges: .bottom)
         .background(Theme.canvas)
-        .toolbar(.hidden, for: .navigationBar)
-        // Fixed header: title, actions and the feed rail never move.
-        .safeAreaBar(edge: .top, spacing: 0) { header }
+        .navigationTitle("V2EX")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar { toolbarContent }
+        .safeAreaBar(edge: .top, spacing: 0) { feedFilterBar }
         .task {
-            await model.load(feed: .latest, followedNodes: followed.names)
+            guard !hasLoadedInitial else { return }
+            hasLoadedInitial = true
+            await model.load(feed: .all, followedNodes: followed.names)
         }
         .onChange(of: model.feed) { _, newFeed in
             Task { await model.load(feed: newFeed, followedNodes: followed.names) }
         }
     }
 
-    private var header: some View {
-        ScreenHeader(title: "V2EX") {
-            GlassCircleButton(action: onSearch) {
-                Image(systemName: "magnifyingglass")
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .topBarTrailing) {
+            Button(action: onCompose) {
+                Image(systemName: "square.and.pencil")
             }
-            GlassCircleButton(filled: true, action: onCompose) {
-                Image(systemName: "plus")
+            .accessibilityLabel("发布话题")
+        }
+    }
+
+    private var feedFilterBar: some View {
+        ChipRail(items: feeds, selected: model.feed) { feed in
+            FilterChip(title: feed.title, isSelected: model.feed == feed) {
+                model.feed = feed
             }
-        } accessory: {
-            ChipRail(items: feeds) { feed in
-                FilterChip(title: feed.title, isSelected: model.feed == feed) {
-                    model.feed = feed
-                }
-            }
+            .id(feed)
         }
     }
 
@@ -203,7 +209,7 @@ struct HomeView: View {
         }
         .scrollIndicators(.hidden)
         .scrollEdgeEffectStyle(.soft, for: .bottom)
-        .refreshable {
+        .pullToRefresh(isEnabled: model.feed == feed) {
             await model.load(feed: feed, followedNodes: followed.names, force: true)
         }
         .scrollPosition(scrollBinding(for: feed))

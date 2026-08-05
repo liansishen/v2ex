@@ -69,6 +69,10 @@ final class FollowedNodesStore: ObservableObject {
     @Published private(set) var names: [String] = []
 
     private let key = "followedNodes"
+    /// 本地取消关注的节点（含删掉的默认种子），同步时从网页收藏里排除——
+    /// 否则 app 里删掉的下一次自动同步又会被拉回来。
+    private let removedKey = "followedNodesRemovedFromSync"
+    private var removedFromSync: Set<String> = []
     /// Seeded so a fresh install has a meaningful 关注 tab, matching the design.
     private let defaults = ["programmer", "create", "apple", "coffee", "autistic"]
 
@@ -79,6 +83,7 @@ final class FollowedNodesStore: ObservableObject {
             names = defaults
             persist()
         }
+        removedFromSync = Set(UserDefaults.standard.stringArray(forKey: removedKey) ?? [])
     }
 
     func isFollowing(_ name: String) -> Bool { names.contains(name) }
@@ -86,14 +91,17 @@ final class FollowedNodesStore: ObservableObject {
     func toggle(_ name: String) {
         if let index = names.firstIndex(of: name) {
             names.remove(at: index)
+            removedFromSync.insert(name)
         } else {
             names.append(name)
+            removedFromSync.remove(name)
         }
         persist()
     }
 
     func remove(_ name: String) {
         names.removeAll { $0 == name }
+        removedFromSync.insert(name)
         persist()
     }
 
@@ -104,6 +112,20 @@ final class FollowedNodesStore: ObservableObject {
 
     private func persist() {
         UserDefaults.standard.set(names, forKey: key)
+        UserDefaults.standard.set(Array(removedFromSync), forKey: removedKey)
+    }
+
+    /// 拉取网页「我收藏的节点」并合并：远程（网页收藏）按顺序在前，本地独有
+    /// （app 内添加、网页没收藏）保留在末尾。未登录或抓取失败静默跳过。
+    func syncFromRemote(cookie: String) async {
+        guard !cookie.isEmpty else { return }
+        guard let remote = try? await V2EXClient.shared.favoriteNodes(cookie: cookie),
+              !remote.isEmpty else { return }
+        let incoming = remote.filter { !removedFromSync.contains($0) }
+        let merged = incoming + names.filter { !incoming.contains($0) }
+        var seen = Set<String>()
+        names = merged.filter { seen.insert($0).inserted }
+        persist()
     }
 }
 
@@ -114,10 +136,11 @@ final class FollowedNodesStore: ObservableObject {
 final class ReadStateStore: ObservableObject {
     @Published private(set) var readIDs: Set<Int> = []
     /// Reply index to restore when 记住阅读进度 is on.
-    @Published private(set) var positions: [Int: Int] = [:]
+    private(set) var positions: [Int: Int] = [:]
 
     private let readKey = "readTopicIDs"
     private let positionKey = "readingPositions"
+    private var positionWriteTask: Task<Void, Never>?
 
     init() {
         readIDs = Set(UserDefaults.standard.array(forKey: readKey) as? [Int] ?? [])
@@ -138,7 +161,17 @@ final class ReadStateStore: ObservableObject {
     }
 
     func rememberPosition(_ floor: Int, for topicID: Int) {
+        guard positions[topicID] != floor else { return }
         positions[topicID] = floor
+        positionWriteTask?.cancel()
+        positionWriteTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled else { return }
+            self?.persistPositions()
+        }
+    }
+
+    private func persistPositions() {
         let encoded = positions.reduce(into: [String: Int]()) { $0[String($1.key)] = $1.value }
         UserDefaults.standard.set(encoded, forKey: positionKey)
     }
@@ -167,6 +200,114 @@ final class FavoritesStore: ObservableObject {
             topics.insert(topic, at: 0)
         }
         DiskStore.save(topics, to: file)
+    }
+
+    /// 拉取 V2EX 网页收藏并合并进本地（登录态）。本地已有的保留，
+    /// 新出现的远程收藏插到最前；未登录或失败时静默跳过。
+    func syncFromRemote(cookie: String, maxPages: Int = 10) async {
+        guard !cookie.isEmpty else { return }
+        guard let remote = try? await V2EXClient.shared.favoriteTopics(
+            cookie: cookie,
+            maxPages: maxPages
+        ) else { return }
+        let existing = Set(topics.map(\.id))
+        let fresh = remote.filter { !existing.contains($0.id) }
+        guard !fresh.isEmpty else { return }
+        topics.insert(contentsOf: fresh, at: 0)
+        DiskStore.save(topics, to: file)
+    }
+}
+
+// MARK: - Topic detail cache
+
+/// Automatic stale-while-revalidate cache for topic detail screens. This is
+/// separate from OfflineStore: opening a topic should make the next visit
+/// instant without adding it to the user's explicit offline-reading list.
+@MainActor
+final class TopicDetailCacheStore: ObservableObject {
+    struct Snapshot: Codable {
+        let topic: V2Topic
+        let replies: [V2Reply]
+        let appends: [TopicAppend]
+        let topicViews: Int?
+        let savedAt: Date
+    }
+
+    private let directory = DiskStore.cacheDirectory(named: "TopicDetails")
+    private let maxDiskEntryCount = 50
+    private let maxDiskByteSize = 32 * 1_024 * 1_024
+    private let maxMemoryEntryCount = 12
+
+    private var memory: [Int: Snapshot] = [:]
+    private var memoryOrder: [Int] = []
+
+    func snapshot(for id: Int) -> Snapshot? {
+        if let cached = memory[id] {
+            remember(cached, for: id)
+            return cached
+        }
+
+        let file = fileURL(for: id)
+        guard let cached = DiskStore.load(Snapshot.self, from: file) else {
+            try? FileManager.default.removeItem(at: file)
+            return nil
+        }
+        remember(cached, for: id)
+        return cached
+    }
+
+    func save(
+        topic: V2Topic,
+        replies: [V2Reply],
+        appends: [TopicAppend],
+        topicViews: Int?
+    ) {
+        let snapshot = Snapshot(
+            topic: topic,
+            replies: replies,
+            appends: appends,
+            topicViews: topicViews,
+            savedAt: Date()
+        )
+        remember(snapshot, for: topic.id)
+        DiskStore.save(snapshot, to: fileURL(for: topic.id))
+        pruneDiskCache()
+    }
+
+    private func fileURL(for id: Int) -> URL {
+        directory.appendingPathComponent("\(id).json")
+    }
+
+    private func remember(_ snapshot: Snapshot, for id: Int) {
+        memory[id] = snapshot
+        memoryOrder.removeAll { $0 == id }
+        memoryOrder.append(id)
+        while memoryOrder.count > maxMemoryEntryCount {
+            memory.removeValue(forKey: memoryOrder.removeFirst())
+        }
+    }
+
+    private func pruneDiskCache() {
+        let keys: Set<URLResourceKey> = [.contentModificationDateKey, .fileSizeKey]
+        let urls = (try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: Array(keys)
+        )) ?? []
+
+        var files = urls.compactMap { url -> (url: URL, size: Int, modified: Date)? in
+            guard url.pathExtension == "json" else { return nil }
+            let values = try? url.resourceValues(forKeys: keys)
+            return (url, values?.fileSize ?? 0, values?.contentModificationDate ?? .distantPast)
+        }
+        files.sort { $0.modified < $1.modified }
+        var totalSize = files.reduce(0) { $0 + $1.size }
+
+        while files.count > 1,
+              files.count > maxDiskEntryCount || totalSize > maxDiskByteSize {
+            let oldest = files.removeFirst()
+            try? FileManager.default.removeItem(at: oldest.url)
+            totalSize -= oldest.size
+        }
     }
 }
 
@@ -368,6 +509,13 @@ enum DiskStore {
 
     static func url(for file: String) -> URL {
         directory(named: "V2EXData").appendingPathComponent(file)
+    }
+
+    static func cacheDirectory(named name: String) -> URL {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        let url = base.appendingPathComponent(name, isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
     }
 
     static func save<T: Encodable>(_ value: T, to url: URL) {

@@ -2,7 +2,9 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var token: TokenStore
+    @EnvironmentObject private var session: V2EXSessionStore
     @EnvironmentObject private var offline: OfflineStore
+    @EnvironmentObject private var settings: AppSettings
     @Environment(\.openURL) private var openURL
 
     var body: some View {
@@ -26,6 +28,34 @@ struct SettingsView: View {
                         ) { Chevron() }
                     }
                     .buttonStyle(.plain)
+                    RowSeparator(leadingInset: 58)
+
+                    NavigationLink(value: Route.v2exLogin) {
+                        SettingsRow(
+                            icon: "person.badge.key.fill",
+                            iconColor: Theme.accent,
+                            title: "V2EX 登录",
+                            subtitle: session.isLoggedIn ? "\(session.username) · 已登录" : "未登录（用于 app 内回复）"
+                        ) { Chevron() }
+                    }
+                    .buttonStyle(.plain)
+                    RowSeparator(leadingInset: 58)
+                    HStack {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("自动同步关注节点")
+                                .font(.system(size: 17))
+                                .kerning(-0.43)
+                                .foregroundStyle(Theme.ink)
+                            Text(session.isLoggedIn ? "登录 \(session.username) 后自动同步网页收藏的节点" : "登录 V2EX 后自动同步网页收藏的节点")
+                                .font(.system(size: 12))
+                                .foregroundStyle(Theme.muted)
+                        }
+                        Spacer()
+                        Toggle("", isOn: $settings.autoSyncFollowedNodes)
+                            .labelsHidden()
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: Theme.Metric.rowHeight)
                 }
 
                 VStack(alignment: .leading, spacing: 0) {

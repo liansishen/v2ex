@@ -16,14 +16,17 @@ final class TopicDetailViewModel: ObservableObject {
 
     @Published private(set) var topic: V2Topic?
     @Published private(set) var replies: [ThreadedReply] = []
+    @Published private(set) var appends: [TopicAppend] = []
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var repliesErrorMessage: String?
     @Published private(set) var loadedFromOffline = false
     @Published private(set) var topicViews: Int?
+    @Published private(set) var contentBlocks: [ContentBlock] = []
     @Published var filter: ReplyFilter = .byFloor
 
     private var rawReplies: [V2Reply] = []
+    private var appendBlocksByIndex: [Int: [ContentBlock]] = [:]
 
     var visibleReplies: [ThreadedReply] {
         switch filter {
@@ -32,16 +35,8 @@ final class TopicDetailViewModel: ObservableObject {
         }
     }
 
-    var contentBlocks: [ContentBlock] {
-        guard let topic else { return [] }
-        if let rendered = topic.contentRendered, !rendered.isEmpty {
-            return HTMLText.blocks(from: rendered)
-        }
-        guard let content = topic.content, !content.isEmpty else { return [] }
-        return content
-            .components(separatedBy: "\n")
-            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-            .map { .paragraph(AttributedString($0)) }
+    func contentBlocks(for append: TopicAppend) -> [ContentBlock] {
+        appendBlocksByIndex[append.index] ?? []
     }
 
     /// Raw payload for the offline snapshot.
@@ -50,23 +45,48 @@ final class TopicDetailViewModel: ObservableObject {
         return (topic, rawReplies)
     }
 
-    func load(id: Int, token: String, offline: OfflineStore) async {
+    func load(
+        id: Int,
+        token: String,
+        cookie: String,
+        cache: TopicDetailCacheStore,
+        offline: OfflineStore
+    ) async {
+        guard !isLoading else { return }
         isLoading = true
         errorMessage = nil
         repliesErrorMessage = nil
         defer { isLoading = false }
 
-        // A saved topic renders immediately, then refreshes if the network is up.
-        if let saved = offline.bundle(for: id) {
-            topic = saved.topic
-            rawReplies = saved.replies
-            replies = Self.thread(saved.replies, authorName: saved.topic.authorName)
-            loadedFromOffline = true
+        // Hydrate once before the first suspension so the detail view replaces
+        // its loading card with cached content immediately. Prefer the newest
+        // automatic or explicitly saved snapshot.
+        if topic == nil {
+            let cached = cache.snapshot(for: id)
+            let saved = offline.bundle(for: id)
+            if let cached, saved.map({ cached.savedAt >= $0.savedAt }) ?? true {
+                apply(
+                    topic: cached.topic,
+                    replies: cached.replies,
+                    appends: cached.appends,
+                    topicViews: cached.topicViews,
+                    loadedFromOffline: false
+                )
+            } else if let saved {
+                apply(
+                    topic: saved.topic,
+                    replies: saved.replies,
+                    appends: [],
+                    topicViews: nil,
+                    loadedFromOffline: true
+                )
+            }
         }
 
+        let fetchedTopic: V2Topic
         do {
-            let fetched = try await V2EXClient.shared.topic(id: id, token: token)
-            topic = fetched
+            fetchedTopic = try await V2EXClient.shared.topic(id: id, token: token)
+            if topic != fetchedTopic { setTopic(fetchedTopic) }
             loadedFromOffline = false
         } catch {
             if topic == nil {
@@ -74,6 +94,10 @@ final class TopicDetailViewModel: ObservableObject {
             }
             return
         }
+
+        // The webpage request runs alongside the replies requests. Cached
+        // extras remain visible until this completes.
+        async let fetchedExtras = try? await V2EXClient.shared.topicPageExtras(id: id, cookie: cookie)
 
         // Replies are a separate request — a failure here must not masquerade
         // as "no replies" on a thread that clearly has some.
@@ -83,31 +107,116 @@ final class TopicDetailViewModel: ObservableObject {
                 // API 2.0 is the maintained surface — v1's replies endpoint
                 // returns stale/empty data for recent threads, so don't gate
                 // it behind the 100-reply long-thread heuristic.
+                // 热门帖分页并行拉取（各页独立），再按 id 恢复时间顺序。
+                let total = fetchedTopic.replies
+                // v2 replies 每页固定 20 条（实测 p=1 返回 20 条），不是 100 条。
+                // 按 100 算页数会把 >20 回复的帖子的最新评论丢在未请求的页里。
+                // 20 页 × 20 条 = 400 条封顶，覆盖绝大多数帖子。
+                let pageCount = min(20, max(1, Int(ceil(Double(total) / 20.0))))
                 var collected: [V2Reply] = []
-                var page = 1
-                while collected.count < (topic?.replies ?? 0), page <= 12 {
-                    let batch = try await V2EXClient.shared.topicRepliesPaged(
-                        id: id, page: page, token: token
-                    )
-                    if batch.isEmpty { break }
-                    collected.append(contentsOf: batch)
-                    page += 1
+                try await withThrowingTaskGroup(of: [V2Reply].self) { group in
+                    for page in 1...pageCount {
+                        group.addTask {
+                            try await V2EXClient.shared.topicRepliesPaged(id: id, page: page, token: token)
+                        }
+                    }
+                    for try await batch in group {
+                        collected.append(contentsOf: batch)
+                    }
                 }
-                fetchedReplies = collected
+                var repliesByID: [Int: V2Reply] = [:]
+                for reply in collected { repliesByID[reply.id] = reply }
+                fetchedReplies = repliesByID.values.sorted { $0.id < $1.id }
             } else {
                 fetchedReplies = try await V2EXClient.shared.replies(topicID: id)
             }
 
-            rawReplies = fetchedReplies
-            replies = Self.thread(fetchedReplies, authorName: topic?.authorName ?? "")
+            // An old API response can be empty or partial for recent threads.
+            // Keep a more complete cached reply list instead of regressing it.
+            let responseLooksIncomplete = !rawReplies.isEmpty
+                && fetchedReplies.count < rawReplies.count
+                && fetchedTopic.replies >= rawReplies.count
+            if !responseLooksIncomplete, fetchedReplies != rawReplies {
+                setReplies(fetchedReplies, authorName: fetchedTopic.authorName)
+            }
         } catch {
             repliesErrorMessage = (error as? V2EXError)?.errorDescription ?? error.localizedDescription
         }
 
-        // View counts aren't in any API — scrape the topic page once.
-        if topicViews == nil {
-            topicViews = await V2EXClient.shared.topicViews(id: id)
+        // Persist API data as soon as it is complete; the webpage extras can
+        // legitimately take longer or time out independently.
+        saveCache(to: cache)
+
+        // 浏览数与附言都来自同一个话题页 —— 一次网页抓取解析两者，
+        // 避免热门帖串行发两个网页请求拖慢首屏。
+        if let extras = await fetchedExtras {
+            var changed = false
+            if let views = extras.views, views != topicViews {
+                topicViews = views
+                changed = true
+            }
+            if !extras.appends.isEmpty, extras.appends != appends {
+                setAppends(extras.appends)
+                changed = true
+            }
+            if changed { saveCache(to: cache) }
         }
+    }
+
+    private func apply(
+        topic: V2Topic,
+        replies: [V2Reply],
+        appends: [TopicAppend],
+        topicViews: Int?,
+        loadedFromOffline: Bool
+    ) {
+        setTopic(topic)
+        setReplies(replies, authorName: topic.authorName)
+        setAppends(appends)
+        self.topicViews = topicViews
+        self.loadedFromOffline = loadedFromOffline
+    }
+
+    private func setReplies(_ replies: [V2Reply], authorName: String) {
+        var seen = Set<Int>()
+        let uniqueReplies = replies.filter { seen.insert($0.id).inserted }
+        rawReplies = uniqueReplies
+        self.replies = Self.thread(uniqueReplies, authorName: authorName)
+    }
+
+    private func setAppends(_ appends: [TopicAppend]) {
+        appendBlocksByIndex = Dictionary(
+            uniqueKeysWithValues: appends.map { append in
+                (append.index, HTMLText.blocks(from: append.content))
+            }
+        )
+        self.appends = appends
+    }
+
+    private func saveCache(to cache: TopicDetailCacheStore) {
+        guard let topic else { return }
+        cache.save(
+            topic: topic,
+            replies: rawReplies,
+            appends: appends,
+            topicViews: topicViews
+        )
+    }
+
+    private func setTopic(_ topic: V2Topic) {
+        let blocks: [ContentBlock]
+        if let rendered = topic.contentRendered, !rendered.isEmpty {
+            blocks = HTMLText.blocks(from: rendered)
+        } else if let content = topic.content, !content.isEmpty {
+            blocks = content
+                .components(separatedBy: "\n")
+                .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+                .map { .paragraph(AttributedString($0)) }
+        } else {
+            blocks = []
+        }
+        contentBlocks = blocks
+        self.topic = topic
     }
 
     // MARK: Quote threading
@@ -131,12 +240,17 @@ final class TopicDetailViewModel: ObservableObject {
                 floorsByAuthor: floorsByAuthor,
                 repliesByFloor: repliesByFloor
             )
+            let body = bodyWithoutQuotePrefix(
+                reply.contentRendered ?? reply.content,
+                hasQuote: quoted != nil
+            )
 
             result.append(ThreadedReply(
                 reply: reply,
                 floor: floor,
                 quoted: quoted,
-                isAuthor: !authorName.isEmpty && reply.authorName == authorName
+                isAuthor: !authorName.isEmpty && reply.authorName == authorName,
+                contentBlocks: HTMLText.blocks(from: body)
             ))
 
             floorsByAuthor[reply.authorName, default: []].append(floor)
@@ -197,7 +311,11 @@ final class TopicDetailViewModel: ObservableObject {
     /// Body with the leading `@user #n` stripped — it's shown in the quote block.
     static func bodyWithoutQuotePrefix(_ reply: ThreadedReply) -> String {
         let source = reply.reply.contentRendered ?? reply.reply.content
-        guard reply.quoted != nil else { return source }
+        return bodyWithoutQuotePrefix(source, hasQuote: reply.quoted != nil)
+    }
+
+    private static func bodyWithoutQuotePrefix(_ source: String, hasQuote: Bool) -> String {
+        guard hasQuote else { return source }
 
         let plain = HTMLText.plain(source)
         guard plain.hasPrefix("@") else { return source }

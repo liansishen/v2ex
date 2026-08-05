@@ -65,22 +65,19 @@ struct ProfileView: View {
         }
         .scrollIndicators(.hidden)
         .scrollEdgeEffectStyle(.soft, for: .bottom)
+        .pullToRefresh { await model.load(token: token.token) }
         .background(Theme.canvas)
-        .toolbar(.hidden, for: .navigationBar)
-        .safeAreaBar(edge: .top, spacing: 0) {
-            ScreenHeader(title: "我的") {
+        .navigationTitle("我的")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
                 NavigationLink(value: Route.settings) {
                     Image(systemName: "gearshape")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(Theme.body)
-                        .frame(width: 36, height: 36)
                 }
-                .buttonStyle(.plain)
-                .glassEffect(.regular.interactive(), in: .circle)
+                .accessibilityLabel("设置")
             }
         }
         .task(id: token.token) { await model.load(token: token.token) }
-        .refreshable { await model.load(token: token.token) }
     }
 
     private func profileCard(_ member: V2Member) -> some View {
@@ -96,7 +93,7 @@ struct ProfileView: View {
                             .font(.system(size: 22, weight: .semibold))
                             .foregroundStyle(.white)
                         if let url = member.avatarURL {
-                            AsyncImage(url: url) { $0.resizable().scaledToFill() } placeholder: { Color.clear }
+                            CachedRemoteImage(url: url)
                         }
                     }
                     .frame(width: 60, height: 60)
@@ -123,9 +120,9 @@ struct ProfileView: View {
                 }
 
                 HStack(spacing: 8) {
-                    statTile(value: "\(model.recentTopics.count)", label: "话题")
-                    statTile(value: "\(favorites.topics.count)", label: "收藏")
-                    statTile(value: "\(offline.bundles.count)", label: "离线", tinted: true)
+                    statTile(value: "\(model.recentTopics.count)", label: "话题", destination: .myPosts)
+                    statTile(value: "\(favorites.topics.count)", label: "收藏", destination: .favorites)
+                    statTile(value: "\(offline.bundles.count)", label: "离线", tinted: true, destination: .offline)
                 }
             }
         }
@@ -138,18 +135,21 @@ struct ProfileView: View {
         return parts.isEmpty ? "V2EX 会员" : parts.joined(separator: " · ")
     }
 
-    private func statTile(value: String, label: String, tinted: Bool = false) -> some View {
-        VStack(spacing: 2) {
-            Text(value)
-                .font(.system(size: 19, weight: .bold))
-                .foregroundStyle(tinted ? Theme.amber : Theme.ink)
-            Text(label)
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.muted)
+    private func statTile(value: String, label: String, tinted: Bool = false, destination: Route) -> some View {
+        NavigationLink(value: destination) {
+            VStack(spacing: 2) {
+                Text(value)
+                    .font(.system(size: 19, weight: .bold))
+                    .foregroundStyle(tinted ? Theme.amber : Theme.ink)
+                Text(label)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.muted)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(Theme.inset, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 10)
-        .background(Theme.inset, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .buttonStyle(.row)
     }
 
     private var signedOutCard: some View {
