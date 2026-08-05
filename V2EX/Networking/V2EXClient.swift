@@ -728,13 +728,14 @@ extension V2EXClient {
     /// `<span class="item_title"><a href="/t/123#reply4" class="topic-link">标题</a></span>`
     /// 回复数在同一行尾部 `<a href="/t/123#reply4" class="count_orange">4</a>`。
     /// 每页 20 条，逐页抓取直到空页或上限（10 页 = 200 条）。
-    func favoriteTopics(cookie: String) async throws -> [V2Topic] {
+    func favoriteTopics(cookie: String, maxPages: Int = 10) async throws -> [V2Topic] {
         let titlePattern = #"<a href="/t/(\d+)(?:#[^"]*)?"[^>]*class="[^"]*topic-link[^"]*"[^>]*>([\s\S]*?)</a>"#
         let countPattern = #"<a href="/t/(\d+)(?:#[^"]*)?"[^>]*class="(?:count_orange|count_gray)"[^>]*>(\d+)"#
 
         var all: [V2Topic] = []
         var page = 1
-        while page <= 10 {
+        let pageLimit = min(max(maxPages, 1), 10)
+        while page <= pageLimit {
             let path = page == 1 ? "/my/topics" : "/my/topics?p=\(page)"
             let html = try await webHTML(path: path, cookie: cookie)
             guard html.contains("topic-link"), !html.contains("Object Not Found") else {
@@ -768,6 +769,23 @@ extension V2EXClient {
             page += 1
         }
         return all
+    }
+
+    /// 网页「我收藏的节点」——API 2.0 没有关注节点接口，从 /my/nodes 抓取。
+    /// 节点链接形如 `<a href="/go/programmer">程序员</a>`，href 就是 API 的
+    /// 英文 node name。未登录（被重定向到 /signin）时抛 sessionExpired。
+    func favoriteNodes(cookie: String) async throws -> [String] {
+        let html = try await webHTML(path: "/my/nodes", cookie: cookie)
+        guard !html.contains("You need to sign in"), !html.contains("/signin") else {
+            Self.log("favoriteNodes: not signed in")
+            throw V2EXError.sessionExpired
+        }
+        let names = Self.matches(in: html, pattern: #"href="/go/([a-zA-Z0-9_-]+)""#, groupCount: 1)
+            .map { $0[1] }
+        var seen = Set<String>()
+        let unique = names.filter { seen.insert($0).inserted }
+        Self.log("favoriteNodes: \(unique.count) nodes")
+        return unique
     }
 
     /// 解析补充内容块。V2EX 改版后的结构：

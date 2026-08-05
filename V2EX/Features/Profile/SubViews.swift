@@ -39,13 +39,14 @@ struct FavoritesView: View {
         .scrollIndicators(.hidden)
         .background(Theme.canvas)
         .navigationTitle("我的收藏")
-        .navigationBarTitleDisplayMode(.large)
+        .navigationBarTitleDisplayMode(.inline)
         .task {
             // 登录态下拉 V2EX 网页收藏合并进本地列表。
             await favorites.syncFromRemote(cookie: session.cookie)
         }
-        .refreshable {
-            await favorites.syncFromRemote(cookie: session.cookie)
+        .pullToRefresh {
+            // 新收藏按时间倒序出现在第一页；完整历史已由上面的后台任务同步。
+            await favorites.syncFromRemote(cookie: session.cookie, maxPages: 1)
         }
     }
 }

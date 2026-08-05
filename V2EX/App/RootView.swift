@@ -1,8 +1,10 @@
 import SwiftUI
 
 enum AppTab: Int, CaseIterable, Identifiable {
-    case home, nodes, notifications, profile
+    case home, nodes, notifications, profile, search
     var id: Int { rawValue }
+
+    static let primary: [AppTab] = [.home, .nodes, .notifications, .profile]
 
     var title: String {
         switch self {
@@ -10,6 +12,7 @@ enum AppTab: Int, CaseIterable, Identifiable {
         case .nodes: return "节点"
         case .notifications: return "通知"
         case .profile: return "我的"
+        case .search: return "搜索"
         }
     }
 
@@ -19,6 +22,7 @@ enum AppTab: Int, CaseIterable, Identifiable {
         case .nodes: return "square.grid.2x2"
         case .notifications: return "bell"
         case .profile: return "person"
+        case .search: return "magnifyingglass"
         }
     }
 
@@ -43,7 +47,6 @@ struct RootView: View {
     @State private var selection: AppTab = .home
     @State private var paths: [AppTab: NavigationPath] = [:]
     @State private var showCompose = false
-    @State private var showSearch = false
 
     /// Debug launch helper — lets automation open a topic directly:
     /// `simctl launch booted com.vibe.v2ex -openTopic 1231572`
@@ -59,13 +62,16 @@ struct RootView: View {
     }
 
     @EnvironmentObject private var token: TokenStore
+    @EnvironmentObject private var session: V2EXSessionStore
+    @EnvironmentObject private var followed: FollowedNodesStore
+    @EnvironmentObject private var settings: AppSettings
     @StateObject private var notifications = NotificationsViewModel()
 
     var body: some View {
         // The native iOS 26 tab bar *is* the design's floating glass pill —
         // including the scroll-away minimise behaviour.
         TabView(selection: tabSelection) {
-            ForEach(AppTab.allCases) { tab in
+            ForEach(AppTab.primary) { tab in
                 Tab(tab.title, systemImage: tab.icon, value: tab) {
                     NavigationStack(path: binding(for: tab)) {
                         screen(for: tab)
@@ -76,13 +82,30 @@ struct RootView: View {
                 }
                 .badge(tab == .notifications ? notifications.unreadCount : 0)
             }
+
+            Tab("搜索", systemImage: "magnifyingglass", value: AppTab.search, role: .search) {
+                NavigationStack(path: binding(for: .search)) {
+                    SearchView()
+                        .navigationDestination(for: Route.self) { route in
+                            destination(route)
+                        }
+                }
+            }
         }
         .tabBarMinimizeBehavior(.onScrollDown)
         .fullScreenCover(isPresented: $showCompose) { ComposeView() }
-        .fullScreenCover(isPresented: $showSearch) { SearchView() }
         .environmentObject(notifications)
         .task(id: token.token) {
             await notifications.refresh(token: token.token)
+        }
+        // 登录后把网页收藏的节点同步到本地（自动同步开关控制）。
+        .task(id: session.isLoggedIn) {
+            guard settings.autoSyncFollowedNodes else { return }
+            await followed.syncFromRemote(cookie: session.cookie)
+        }
+        .background {
+            KeyboardDismissTapCapture()
+                .allowsHitTesting(false)
         }
     }
 
@@ -108,13 +131,15 @@ struct RootView: View {
     private func screen(for tab: AppTab) -> some View {
         switch tab {
         case .home:
-            HomeView(onCompose: { showCompose = true }, onSearch: { showSearch = true })
+            HomeView(onCompose: { showCompose = true })
         case .nodes:
             NodesView()
         case .notifications:
             NotificationsView()
         case .profile:
             ProfileView()
+        case .search:
+            SearchView()
         }
     }
 

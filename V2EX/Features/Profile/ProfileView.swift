@@ -65,24 +65,19 @@ struct ProfileView: View {
         }
         .scrollIndicators(.hidden)
         .scrollEdgeEffectStyle(.soft, for: .bottom)
+        .pullToRefresh { await model.load(token: token.token) }
         .background(Theme.canvas)
-        .toolbar(.hidden, for: .navigationBar)
-        .safeAreaBar(edge: .top, spacing: 0) {
-            ScreenHeader(title: "我的") {
+        .navigationTitle("我的")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
                 NavigationLink(value: Route.settings) {
                     Image(systemName: "gearshape")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(Theme.body)
-                        .frame(width: 36, height: 36)
                 }
-                .buttonStyle(.plain)
-                // interactive 玻璃会干扰 NavigationLink 的点击（iOS 26），
-                // 导致要点几次才响应 —— 用纯装饰玻璃。
-                .glassEffect(.regular, in: .circle)
+                .accessibilityLabel("设置")
             }
         }
         .task(id: token.token) { await model.load(token: token.token) }
-        .refreshable { await model.load(token: token.token) }
     }
 
     private func profileCard(_ member: V2Member) -> some View {

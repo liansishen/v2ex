@@ -105,8 +105,8 @@ struct NotificationsView: View {
     ]
 
     var body: some View {
-        // One page per scope: swipe left/right to change the filter, the chip
-        // rail above stays in sync through `model.scope`.
+        // One page per scope: swiping and the system segmented control stay in
+        // sync through the shared `model.scope` selection.
         TabView(selection: $model.scope) {
             ForEach(Array(scopes.enumerated()), id: \.offset) { _, scope in
                 page(for: scope.kind)
@@ -117,36 +117,35 @@ struct NotificationsView: View {
         // Let the list scroll under the floating tab bar instead of stopping above it.
         .ignoresSafeArea(edges: .bottom)
         .background(Theme.canvas)
-        .toolbar(.hidden, for: .navigationBar)
-        .safeAreaBar(edge: .top, spacing: 0) { header }
+        .navigationTitle("通知")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("全部已读") {
+                    withAnimation(.snappy) { model.markAllRead() }
+                }
+                .disabled(model.unreadCount == 0)
+            }
+        }
+        .safeAreaBar(edge: .top, spacing: 0) { scopePicker }
         .task { await model.refresh(token: token.token) }
     }
 
-    private var header: some View {
-        ScreenHeader(title: "通知") {
-            Button("全部已读") { withAnimation(.snappy) { model.markAllRead() } }
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(Theme.accent)
-                .opacity(model.unreadCount > 0 ? 1 : 0.4)
-                .disabled(model.unreadCount == 0)
-        } accessory: {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(Array(scopes.enumerated()), id: \.offset) { _, scope in
-                        let count = scope.kind.map { model.count(of: $0) } ?? model.unreadCount
-                        FilterChip(
-                            title: count > 0 ? "\(scope.title) \(count)" : scope.title,
-                            isSelected: model.scope == scope.kind
-                        ) {
-                            model.scope = scope.kind
-                        }
-                    }
-                }
-                .padding(.horizontal, Theme.Metric.screenPadding)
-                .padding(.vertical, 2)
+    private var scopePicker: some View {
+        Picker("通知类型", selection: $model.scope) {
+            ForEach(Array(scopes.enumerated()), id: \.offset) { _, scope in
+                Text(scopeLabel(scope.kind, title: scope.title))
+                    .tag(scope.kind)
             }
-            .scrollClipDisabled()
         }
+        .pickerStyle(.segmented)
+        .padding(.horizontal, Theme.Metric.screenPadding)
+        .padding(.vertical, 8)
+    }
+
+    private func scopeLabel(_ kind: V2Notification.Kind?, title: String) -> String {
+        let count = kind.map { model.count(of: $0) } ?? model.unreadCount
+        return count > 0 ? "\(title) \(count)" : title
     }
 
     private func page(for kind: V2Notification.Kind?) -> some View {
@@ -179,7 +178,9 @@ struct NotificationsView: View {
             .padding(.bottom, 100)
         }
         .scrollIndicators(.hidden)
-        .refreshable { await model.refresh(token: token.token) }
+        .pullToRefresh(isEnabled: model.scope == kind) {
+            await model.refresh(token: token.token)
+        }
         .scrollPosition(scrollBinding(for: kind))
     }
 

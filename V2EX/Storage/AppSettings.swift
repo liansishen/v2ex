@@ -74,6 +74,7 @@ final class AppSettings: ObservableObject {
     @AppStorage("monoFont") var monoFont: MonoFontPreference = .sfMono
     @AppStorage("rememberReadingPosition") var rememberReadingPosition = true
     @AppStorage("autoOfflineFollowedNodes") var autoOfflineFollowedNodes = true
+    @AppStorage("autoSyncFollowedNodes") var autoSyncFollowedNodes = true
     @AppStorage("offlineOnWiFiOnly") var offlineOnWiFiOnly = true
     @AppStorage("dimReadTopics") var dimReadTopics = false
 

@@ -1,4 +1,84 @@
 import SwiftUI
+import UIKit
+
+// MARK: - Keyboard dismissal
+
+/// Installs one non-cancelling window tap recognizer for the whole app. Text
+/// inputs and UIKit controls keep their normal focus; taps on surrounding
+/// content end editing without blocking SwiftUI navigation or scrolling.
+struct KeyboardDismissTapCapture: UIViewRepresentable {
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> WindowReaderView {
+        let view = WindowReaderView()
+        view.isUserInteractionEnabled = false
+        view.onWindowChange = { [weak coordinator = context.coordinator] window in
+            coordinator?.attach(to: window)
+        }
+        return view
+    }
+
+    func updateUIView(_ uiView: WindowReaderView, context: Context) {
+        context.coordinator.attach(to: uiView.window)
+    }
+
+    static func dismantleUIView(_ uiView: WindowReaderView, coordinator: Coordinator) {
+        coordinator.detach()
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        private weak var window: UIWindow?
+        private lazy var recognizer: UITapGestureRecognizer = {
+            let recognizer = UITapGestureRecognizer(target: self, action: #selector(dismissKeyboard))
+            recognizer.cancelsTouchesInView = false
+            recognizer.delegate = self
+            return recognizer
+        }()
+
+        func attach(to window: UIWindow?) {
+            guard self.window !== window else { return }
+            detach()
+            self.window = window
+            window?.addGestureRecognizer(recognizer)
+        }
+
+        func detach() {
+            window?.removeGestureRecognizer(recognizer)
+            window = nil
+        }
+
+        @objc private func dismissKeyboard() {
+            window?.endEditing(true)
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            var view = touch.view
+            while let current = view {
+                if current is UITextField || current is UITextView || current is UIControl {
+                    return false
+                }
+                view = current.superview
+            }
+            return true
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            true
+        }
+    }
+}
+
+final class WindowReaderView: UIView {
+    var onWindowChange: ((UIWindow?) -> Void)?
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        onWindowChange?(window)
+    }
+}
 
 // MARK: - Grouped card
 
@@ -127,73 +207,6 @@ extension ButtonStyle where Self == PressableRowStyle {
     static var row: PressableRowStyle { PressableRowStyle() }
 }
 
-// MARK: - Fixed screen header
-
-/// Title and actions on one row, per the design doc — half the height of a
-/// system large title stacked over a toolbar, and it never moves.
-///
-/// Pin it with `.safeAreaBar(edge: .top)` so scroll content passes under the
-/// system's own bar material instead of colliding with the header.
-struct ScreenHeader<Actions: View, Accessory: View>: View {
-    let title: String
-    @ViewBuilder var actions: Actions
-    /// Optional second row — chip rail, search field…
-    @ViewBuilder var accessory: Accessory
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center, spacing: 10) {
-                Text(title)
-                    .font(.system(size: 24, weight: .bold))
-                    .kerning(-0.6)
-                    .foregroundStyle(Theme.ink)
-                Spacer(minLength: 8)
-                actions
-            }
-            .padding(.horizontal, Theme.Metric.screenPadding)
-
-            accessory
-        }
-        .padding(.top, 6)
-        .padding(.bottom, 8)
-    }
-}
-
-extension ScreenHeader where Accessory == EmptyView {
-    init(title: String, @ViewBuilder actions: () -> Actions) {
-        self.init(title: title, actions: actions) { EmptyView() }
-    }
-}
-
-extension ScreenHeader where Actions == EmptyView, Accessory == EmptyView {
-    init(_ title: String) {
-        self.init(title: title) { EmptyView() } accessory: { EmptyView() }
-    }
-}
-
-/// 36pt circular Liquid Glass action button for the header row.
-struct GlassCircleButton<Content: View>: View {
-    var filled = false
-    var action: () -> Void
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        Button(action: action) {
-            content
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(filled ? Color.white : Theme.body)
-                .frame(width: 36, height: 36)
-        }
-        .buttonStyle(.plain)
-        // interactive 玻璃在 iOS 26 会拦截 Button 的点击（要点几次才响应），
-        // 这里只保留装饰性玻璃，交互交给 Button 自己。
-        .glassEffect(
-            filled ? .regular.tint(Theme.accent) : .regular,
-            in: .circle
-        )
-    }
-}
-
 // MARK: - Chips
 
 /// Pill filter used for the home tabs, node sort order, notification scopes…
@@ -219,16 +232,18 @@ struct FilterChip: View {
 
 /// Horizontal chip rail with the design's 8pt gutters.
 /// 传入 `selected` 时，选中项变化会自动滚动到可视区中间（App Store 风格）。
-struct ChipRail<Item: Hashable, Label: View>: View {
+struct ChipRail<Item: Hashable, Label: View, Trailing: View>: View {
     let items: [Item]
     var selected: Item? = nil
     @ViewBuilder var label: (Item) -> Label
+    @ViewBuilder var trailing: Trailing
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(items, id: \.self, content: label)
+                    trailing
                 }
                 .padding(.horizontal, Theme.Metric.screenPadding)
                 .padding(.vertical, 8)
@@ -241,6 +256,12 @@ struct ChipRail<Item: Hashable, Label: View>: View {
                 }
             }
         }
+    }
+}
+
+extension ChipRail where Trailing == EmptyView {
+    init(items: [Item], selected: Item? = nil, @ViewBuilder label: @escaping (Item) -> Label) {
+        self.init(items: items, selected: selected, label: label) { EmptyView() }
     }
 }
 

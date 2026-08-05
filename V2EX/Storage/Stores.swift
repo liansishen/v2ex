@@ -69,6 +69,10 @@ final class FollowedNodesStore: ObservableObject {
     @Published private(set) var names: [String] = []
 
     private let key = "followedNodes"
+    /// 本地取消关注的节点（含删掉的默认种子），同步时从网页收藏里排除——
+    /// 否则 app 里删掉的下一次自动同步又会被拉回来。
+    private let removedKey = "followedNodesRemovedFromSync"
+    private var removedFromSync: Set<String> = []
     /// Seeded so a fresh install has a meaningful 关注 tab, matching the design.
     private let defaults = ["programmer", "create", "apple", "coffee", "autistic"]
 
@@ -79,6 +83,7 @@ final class FollowedNodesStore: ObservableObject {
             names = defaults
             persist()
         }
+        removedFromSync = Set(UserDefaults.standard.stringArray(forKey: removedKey) ?? [])
     }
 
     func isFollowing(_ name: String) -> Bool { names.contains(name) }
@@ -86,14 +91,17 @@ final class FollowedNodesStore: ObservableObject {
     func toggle(_ name: String) {
         if let index = names.firstIndex(of: name) {
             names.remove(at: index)
+            removedFromSync.insert(name)
         } else {
             names.append(name)
+            removedFromSync.remove(name)
         }
         persist()
     }
 
     func remove(_ name: String) {
         names.removeAll { $0 == name }
+        removedFromSync.insert(name)
         persist()
     }
 
@@ -104,6 +112,20 @@ final class FollowedNodesStore: ObservableObject {
 
     private func persist() {
         UserDefaults.standard.set(names, forKey: key)
+        UserDefaults.standard.set(Array(removedFromSync), forKey: removedKey)
+    }
+
+    /// 拉取网页「我收藏的节点」并合并：远程（网页收藏）按顺序在前，本地独有
+    /// （app 内添加、网页没收藏）保留在末尾。未登录或抓取失败静默跳过。
+    func syncFromRemote(cookie: String) async {
+        guard !cookie.isEmpty else { return }
+        guard let remote = try? await V2EXClient.shared.favoriteNodes(cookie: cookie),
+              !remote.isEmpty else { return }
+        let incoming = remote.filter { !removedFromSync.contains($0) }
+        let merged = incoming + names.filter { !incoming.contains($0) }
+        var seen = Set<String>()
+        names = merged.filter { seen.insert($0).inserted }
+        persist()
     }
 }
 
@@ -171,9 +193,12 @@ final class FavoritesStore: ObservableObject {
 
     /// 拉取 V2EX 网页收藏并合并进本地（登录态）。本地已有的保留，
     /// 新出现的远程收藏插到最前；未登录或失败时静默跳过。
-    func syncFromRemote(cookie: String) async {
+    func syncFromRemote(cookie: String, maxPages: Int = 10) async {
         guard !cookie.isEmpty else { return }
-        guard let remote = try? await V2EXClient.shared.favoriteTopics(cookie: cookie) else { return }
+        guard let remote = try? await V2EXClient.shared.favoriteTopics(
+            cookie: cookie,
+            maxPages: maxPages
+        ) else { return }
         let existing = Set(topics.map(\.id))
         let fresh = remote.filter { !existing.contains($0.id) }
         guard !fresh.isEmpty else { return }

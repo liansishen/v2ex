@@ -53,56 +53,30 @@ struct NodesView: View {
     @StateObject private var model = NodesViewModel()
     @EnvironmentObject private var followed: FollowedNodesStore
     @State private var isEditingFollowed = false
-
-    @FocusState private var searchFocused: Bool
+    @FocusState private var isSearchFocused: Bool
 
     var body: some View {
         content
             .background(Theme.canvas)
-            .toolbar(.hidden, for: .navigationBar)
-            .safeAreaBar(edge: .top, spacing: 0) { header }
-            .task { await model.load() }
-    }
-
-    private var header: some View {
-        ScreenHeader(title: "节点") {
-            if !model.query.isEmpty {
-                Button("取消") {
-                    model.query = ""
-                    searchFocused = false
-                }
-                .font(.system(size: 16))
-                .foregroundStyle(Theme.accent)
-            }
-        } accessory: {
-            HStack(spacing: 7) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(Theme.muted)
-                TextField(
-                    model.nodeCount > 0 ? "搜索 \(model.nodeCount.formatted()) 个节点" : "搜索节点",
-                    text: $model.query
-                )
-                .font(.system(size: 16))
-                .foregroundStyle(Theme.ink)
-                .focused($searchFocused)
-                .submitLabel(.search)
-                if !model.query.isEmpty {
+            .navigationTitle("节点")
+            .navigationBarTitleDisplayMode(.large)
+            .searchable(
+                text: $model.query,
+                placement: .navigationBarDrawer(displayMode: .always),
+                prompt: model.nodeCount > 0 ? "搜索 \(model.nodeCount.formatted()) 个节点" : "搜索节点"
+            )
+            .searchFocused($isSearchFocused)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        model.query = ""
+                        withAnimation(.snappy) { isEditingFollowed.toggle() }
                     } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 15))
-                            .foregroundStyle(Theme.faint)
+                        Image(systemName: isEditingFollowed ? "checkmark" : "pencil")
                     }
-                    .buttonStyle(.plain)
+                    .accessibilityLabel(isEditingFollowed ? "完成编辑" : "编辑关注节点")
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 9)
-            .background(Theme.inset, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .padding(.horizontal, Theme.Metric.screenPadding)
-        }
+            .task { await model.load() }
     }
 
     @ViewBuilder
@@ -147,26 +121,31 @@ struct NodesView: View {
 
     private var followedSection: some View {
         VStack(alignment: .leading, spacing: 0) {
-            GroupHeader(title: "我关注的", trailing: isEditingFollowed ? "完成" : "编辑") {
-                withAnimation(.snappy) { isEditingFollowed.toggle() }
-            }
+            GroupHeader(title: "我关注的")
             CardSection(padding: 14) {
                 FlowLayout(spacing: 8) {
                     ForEach(followed.names, id: \.self) { name in
                         followedChip(name)
                     }
                     if !isEditingFollowed {
-                        Text("+ 添加")
-                            .font(.system(size: 14))
-                            .foregroundStyle(Theme.muted)
-                            .padding(.horizontal, 11)
-                            .padding(.vertical, 6)
-                            .overlay {
-                                Capsule().strokeBorder(
-                                    Theme.faint,
-                                    style: StrokeStyle(lineWidth: 1, dash: [3, 3])
-                                )
-                            }
+                        Button {
+                            model.query = ""
+                            isSearchFocused = true
+                        } label: {
+                            Text("+ 添加")
+                                .font(.system(size: 14))
+                                .foregroundStyle(Theme.muted)
+                                .padding(.horizontal, 11)
+                                .padding(.vertical, 6)
+                                .overlay {
+                                    Capsule().strokeBorder(
+                                        Theme.faint,
+                                        style: StrokeStyle(lineWidth: 1, dash: [3, 3])
+                                    )
+                                }
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("添加关注节点")
                     }
                 }
             }

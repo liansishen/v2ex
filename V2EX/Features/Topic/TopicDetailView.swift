@@ -45,7 +45,7 @@ struct TopicDetailView: View {
                     .padding(.bottom, 110)
                 }
                 .scrollIndicators(.hidden)
-                .refreshable {
+                .pullToRefresh {
                     await model.load(id: topicID, token: token.token, cookie: session.cookie, offline: offline)
                 }
                 .onChange(of: model.replies.count) { _, count in
@@ -161,28 +161,30 @@ struct TopicDetailView: View {
                     .foregroundStyle(Theme.ink)
                     .fixedSize(horizontal: false, vertical: true)
 
-                HStack(spacing: 9) {
+                HStack(spacing: 10) {
                     NavigationLink(value: Route.member(topic.authorName)) {
-                        HStack(spacing: 9) {
-                            IdentitySquare(text: topic.authorName, size: 30, imageURL: topic.member?.avatarURL)
-                            VStack(alignment: .leading, spacing: 0) {
+                        HStack(spacing: 10) {
+                            IdentitySquare(text: topic.authorName, size: 34, imageURL: topic.member?.avatarURL)
+                            VStack(alignment: .leading, spacing: 2) {
                                 Text(topic.authorName)
-                                    .font(.system(size: 14, weight: .medium))
+                                    .font(.system(size: 14, weight: .semibold))
                                     .foregroundStyle(Theme.ink)
+                                    .lineLimit(1)
                                 Text(RelativeTime.string(from: topic.activityDate))
                                     .font(.system(size: 12))
                                     .foregroundStyle(Theme.muted)
-                                if let views = model.topicViews {
-                                    Text("\(views.formatted()) 次阅读")
-                                        .font(.system(size: 12))
-                                        .foregroundStyle(Theme.muted)
-                                }
                             }
                         }
                     }
                     .buttonStyle(.plain)
 
                     Spacer(minLength: 4)
+                    if let views = model.topicViews {
+                        Label(views.formatted(), systemImage: "eye")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(Theme.muted)
+                            .accessibilityLabel("\(views.formatted()) 次阅读")
+                    }
                     if offline.isOffline(topicID) { OfflineBadge() }
                 }
 
@@ -341,15 +343,13 @@ struct TopicDetailView: View {
                     } label: {
                         Image(systemName: "arrow.up")
                             .font(.system(size: 15, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 48, height: 48)
-                            .background(Circle().fill(Theme.accent))
+                            .frame(width: 22, height: 22)
                     }
-                    .buttonStyle(.plain)
-                    // 不用 glassEffect：iOS 26 的 interactive 玻璃层会吃掉
-                    // Button 的点击，导致发送无反应。
+                    .buttonStyle(.glassProminent)
+                    .buttonBorderShape(.circle)
+                    .controlSize(.large)
+                    .tint(Theme.accent)
                     .disabled(isSending || replyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .opacity(isSending || replyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.4 : 1)
                 }
             } else {
                 HStack(spacing: 12) {
@@ -371,11 +371,12 @@ struct TopicDetailView: View {
                     } label: {
                         Image(systemName: "arrow.up")
                             .font(.system(size: 15, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 48, height: 48)
+                            .frame(width: 22, height: 22)
                     }
-                    .buttonStyle(.plain)
-                    .glassEffect(.regular.tint(Theme.accent).interactive(), in: .circle)
+                    .buttonStyle(.glassProminent)
+                    .buttonBorderShape(.circle)
+                    .controlSize(.large)
+                    .tint(Theme.accent)
                 }
             }
         }

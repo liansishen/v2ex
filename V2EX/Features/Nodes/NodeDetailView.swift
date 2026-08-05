@@ -107,6 +107,7 @@ struct NodeDetailView: View {
             .padding(.bottom, 12)
         }
         .scrollIndicators(.hidden)
+        .pullToRefresh { await model.load(name: nodeName, token: token.token) }
         .background(Theme.canvas)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -137,7 +138,6 @@ struct NodeDetailView: View {
             }
         }
         .task { await model.load(name: nodeName, token: token.token) }
-        .refreshable { await model.load(name: nodeName, token: token.token) }
     }
 
     private var headerCard: some View {

@@ -73,75 +73,32 @@ final class SearchViewModel: ObservableObject {
 struct SearchView: View {
     @StateObject private var model = SearchViewModel()
     @EnvironmentObject private var recents: RecentSearchStore
-    @Environment(\.dismiss) private var dismiss
     @FocusState private var searchFocused: Bool
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                searchBar
-                scopeChips
-                results
-            }
+        results
             .background(Theme.canvas)
-            .toolbar(.hidden, for: .navigationBar)
-            .navigationDestination(for: Route.self) { route in
-                switch route {
-                case .topic(let id): TopicDetailView(topicID: id)
-                case .node(let name): NodeDetailView(nodeName: name)
-                case .member(let name): MemberView(username: name)
-                default: EmptyView()
+            .navigationTitle("搜索")
+            .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $model.query, prompt: "话题、回复、用户或节点")
+            .searchScopes($model.scope) {
+                ForEach(SearchViewModel.Scope.allCases) { scope in
+                    Text(scope.title).tag(scope)
                 }
             }
-        }
-        .onAppear { searchFocused = true }
-    }
-
-    private var searchBar: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 7) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(Theme.muted)
-                TextField("搜索话题、回复、用户", text: $model.query)
-                    .font(.system(size: 16))
-                    .foregroundStyle(Theme.ink)
-                    .focused($searchFocused)
-                    .submitLabel(.search)
-                    .onSubmit { submit() }
-                if !model.query.isEmpty {
-                    Button {
-                        model.query = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 15))
-                            .foregroundStyle(Theme.faint)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 9)
-            .background(Theme.inset, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-
-            Button("取消") { dismiss() }
-                .font(.system(size: 17))
-                .foregroundStyle(Theme.accent)
-        }
-        .padding(.horizontal, Theme.Metric.screenPadding)
-        .padding(.top, 8)
-        .padding(.bottom, 10)
-    }
-
-    private var scopeChips: some View {
-        ChipRail(items: SearchViewModel.Scope.allCases, selected: model.scope) { scope in
-            let count = scope == .topics && !model.hits.isEmpty ? " \(model.hits.count)" : ""
-            FilterChip(title: scope.title + count, isSelected: model.scope == scope) {
-                model.scope = scope
+            .searchFocused($searchFocused)
+            .onSubmit(of: .search) { submit() }
+            .onChange(of: model.scope) {
                 Task { await model.run() }
             }
-        }
-        .padding(.bottom, 12)
+            .onChange(of: model.query) { _, query in
+                if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Task { await model.run() }
+                }
+            }
+            .onAppear {
+                DispatchQueue.main.async { searchFocused = true }
+            }
     }
 
     @ViewBuilder
@@ -164,6 +121,7 @@ struct SearchView: View {
                     recentSearches
                 }
             }
+            .padding(.top, 10)
             .padding(.bottom, 40)
         }
         .scrollIndicators(.hidden)
