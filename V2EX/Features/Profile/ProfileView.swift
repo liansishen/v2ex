@@ -93,7 +93,7 @@ struct ProfileView: View {
                             .font(.system(size: 22, weight: .semibold))
                             .foregroundStyle(.white)
                         if let url = member.avatarURL {
-                            AsyncImage(url: url) { $0.resizable().scaledToFill() } placeholder: { Color.clear }
+                            CachedRemoteImage(url: url)
                         }
                     }
                     .frame(width: 60, height: 60)

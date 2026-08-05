@@ -136,6 +136,83 @@ struct RowSeparator: View {
 
 // MARK: - Node / avatar squares
 
+private enum RemoteImageMemoryCache {
+    static let images: NSCache<NSURL, UIImage> = {
+        let cache = NSCache<NSURL, UIImage>()
+        cache.countLimit = 500
+        cache.totalCostLimit = 24 * 1_024 * 1_024
+        return cache
+    }()
+
+    static func image(for url: URL) -> UIImage? {
+        images.object(forKey: url as NSURL)
+    }
+
+    static func insert(_ image: UIImage, for url: URL) {
+        let cost = image.cgImage.map { $0.bytesPerRow * $0.height } ?? 0
+        images.setObject(image, forKey: url as NSURL, cost: cost)
+    }
+}
+
+/// Uses an already-decoded in-memory image synchronously when a lazy list row
+/// is recreated. This avoids the placeholder frame that `AsyncImage` shows
+/// even when its underlying network response is cached.
+struct CachedRemoteImage: View {
+    private struct LoadedImage {
+        let url: URL
+        let image: UIImage
+    }
+
+    let url: URL
+    var contentMode: ContentMode = .fill
+
+    @State private var loadedImage: LoadedImage?
+
+    init(url: URL, contentMode: ContentMode = .fill) {
+        self.url = url
+        self.contentMode = contentMode
+        _loadedImage = State(initialValue: RemoteImageMemoryCache.image(for: url).map {
+            LoadedImage(url: url, image: $0)
+        })
+    }
+
+    var body: some View {
+        Group {
+            if let loadedImage, loadedImage.url == url {
+                Image(uiImage: loadedImage.image)
+                    .resizable()
+                    .aspectRatio(contentMode: contentMode)
+            } else {
+                Color.clear
+            }
+        }
+        .task(id: url) {
+            await loadImage()
+        }
+    }
+
+    @MainActor
+    private func loadImage() async {
+        if let cached = RemoteImageMemoryCache.image(for: url) {
+            loadedImage = LoadedImage(url: url, image: cached)
+            return
+        }
+
+        loadedImage = nil
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            guard !Task.isCancelled,
+                  let response = response as? HTTPURLResponse,
+                  (200..<300).contains(response.statusCode),
+                  let loaded = UIImage(data: data) else { return }
+            RemoteImageMemoryCache.insert(loaded, for: url)
+            loadedImage = LoadedImage(url: url, image: loaded)
+        } catch {
+            // The initials below remain visible on network or decoding errors.
+        }
+    }
+}
+
 /// Rounded square avatar. Shows the remote image when there is one and falls
 /// back to the design's coloured initials square — which also stands in as the
 /// placeholder while loading, so lists never flash empty grey tiles.
@@ -170,18 +247,9 @@ struct IdentitySquare: View {
                 .minimumScaleFactor(0.6)
                 .lineLimit(1)
             if let imageURL {
-                AsyncImage(url: imageURL, transaction: Transaction(animation: .easeOut(duration: 0.18))) { phase in
-                    if let image = phase.image {
-                        image.resizable().scaledToFill()
-                    } else {
-                        // Keep the initials tile visible on load failure too.
-                        Color.clear
-                    }
-                }
-                // Without an explicit frame AsyncImage lays out at the image's
-                // intrinsic size and the tile shows only a clipped corner.
-                .frame(width: size, height: size)
-                .clipped()
+                CachedRemoteImage(url: imageURL)
+                    .frame(width: size, height: size)
+                    .clipped()
             }
         }
         .frame(width: size, height: size)

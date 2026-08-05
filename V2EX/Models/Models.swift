@@ -155,6 +155,7 @@ struct ThreadedReply: Identifiable, Hashable {
     let floor: Int
     var quoted: QuotedReply?
     var isAuthor: Bool
+    let contentBlocks: [ContentBlock]
 
     var id: Int { reply.id }
 

@@ -5,6 +5,7 @@ struct TopicDetailView: View {
 
     @StateObject private var model = TopicDetailViewModel()
     @EnvironmentObject private var token: TokenStore
+    @EnvironmentObject private var topicCache: TopicDetailCacheStore
     @EnvironmentObject private var offline: OfflineStore
     @EnvironmentObject private var favorites: FavoritesStore
     @EnvironmentObject private var readState: ReadStateStore
@@ -18,6 +19,7 @@ struct TopicDetailView: View {
     @State private var showReplyError = false
     @State private var isSending = false
     @State private var isSyncingFavorite = false
+    @State private var isComposerHidden = false
     @FocusState private var composerFocused: Bool
 
     var body: some View {
@@ -45,8 +47,16 @@ struct TopicDetailView: View {
                     .padding(.bottom, 110)
                 }
                 .scrollIndicators(.hidden)
+                .scrollDismissesKeyboard(.interactively)
+                .simultaneousGesture(composerVisibilityGesture)
                 .pullToRefresh {
-                    await model.load(id: topicID, token: token.token, cookie: session.cookie, offline: offline)
+                    await model.load(
+                        id: topicID,
+                        token: token.token,
+                        cookie: session.cookie,
+                        cache: topicCache,
+                        offline: offline
+                    )
                 }
                 .onChange(of: model.replies.count) { _, count in
                     guard settings.rememberReadingPosition, count > 0,
@@ -59,6 +69,11 @@ struct TopicDetailView: View {
             }
 
             replyComposer
+                .offset(y: isComposerHidden ? 110 : 0)
+                .opacity(isComposerHidden ? 0 : 1)
+                .allowsHitTesting(!isComposerHidden)
+                .accessibilityHidden(isComposerHidden)
+                .animation(.snappy(duration: 0.24), value: isComposerHidden)
         }
         .navigationBarTitleDisplayMode(.inline)
         // The floating reply composer owns the bottom of this screen.
@@ -66,7 +81,13 @@ struct TopicDetailView: View {
         .toolbar { toolbarContent }
         .task {
             readState.markRead(topicID)
-            await model.load(id: topicID, token: token.token, cookie: session.cookie, offline: offline)
+            await model.load(
+                id: topicID,
+                token: token.token,
+                cookie: session.cookie,
+                cache: topicCache,
+                offline: offline
+            )
         }
     }
 
@@ -210,7 +231,7 @@ struct TopicDetailView: View {
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(Theme.accent)
 
-                            let appendBlocks = HTMLText.blocks(from: append.content)
+                            let appendBlocks = model.contentBlocks(for: append)
                             if appendBlocks.isEmpty {
                                 Text(append.content)
                                     .font(.system(size: 15))
@@ -278,7 +299,15 @@ struct TopicDetailView: View {
                     message: message,
                     actionTitle: "重试"
                 ) {
-                    Task { await model.load(id: topicID, token: token.token, cookie: session.cookie, offline: offline) }
+                    Task {
+                        await model.load(
+                            id: topicID,
+                            token: token.token,
+                            cookie: session.cookie,
+                            cache: topicCache,
+                            offline: offline
+                        )
+                    }
                 }
             } else if !token.hasToken, (model.topic?.replies ?? 0) > 0 {
                 // v1's replies endpoint returns empty data for recent threads —
@@ -299,9 +328,10 @@ struct TopicDetailView: View {
                 EmptyStateCard(icon: "bubble.left", title: "还没有回复")
             }
         } else {
-            CardSection {
-                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                VStack(alignment: .leading, spacing: 0) {
                     ReplyRow(item: item, onReply: { mention in
+                        setComposerHidden(false)
                         replyDraft = mention
                         composerFocused = true
                     })
@@ -314,11 +344,41 @@ struct TopicDetailView: View {
                         RowSeparator(leadingInset: 59)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Theme.card)
+                .clipShape(
+                    UnevenRoundedRectangle(
+                        topLeadingRadius: index == 0 ? Theme.Metric.cardRadius : 0,
+                        bottomLeadingRadius: index == items.count - 1 ? Theme.Metric.cardRadius : 0,
+                        bottomTrailingRadius: index == items.count - 1 ? Theme.Metric.cardRadius : 0,
+                        topTrailingRadius: index == 0 ? Theme.Metric.cardRadius : 0,
+                        style: .continuous
+                    )
+                )
+                .padding(.horizontal, Theme.Metric.screenPadding)
+                .padding(.top, index == 0 ? 0 : -10)
             }
         }
     }
 
     // MARK: Composer
+
+    private var composerVisibilityGesture: some Gesture {
+        DragGesture(minimumDistance: 8)
+            .onChanged { value in
+                if value.translation.height < -18 {
+                    setComposerHidden(true)
+                } else if value.translation.height > 18 {
+                    setComposerHidden(false)
+                }
+            }
+    }
+
+    private func setComposerHidden(_ hidden: Bool) {
+        guard hidden != isComposerHidden, !(hidden && isSending) else { return }
+        if hidden { composerFocused = false }
+        isComposerHidden = hidden
+    }
 
     /// Floating Liquid Glass composer. The field and the send button live in one
     /// GlassEffectContainer so their glass blends instead of stacking.
@@ -398,7 +458,13 @@ struct TopicDetailView: View {
             try await V2EXClient.shared.reply(topicID: topicID, content: content, cookie: session.cookie)
             replyDraft = ""
             composerFocused = false
-            await model.load(id: topicID, token: token.token, cookie: session.cookie, offline: offline)
+            await model.load(
+                id: topicID,
+                token: token.token,
+                cookie: session.cookie,
+                cache: topicCache,
+                offline: offline
+            )
         } catch {
             // 回复失败不再清登录状态：一次失败不代表会话失效，由用户决定何时退出。
             if case V2EXError.sessionExpired = error {
@@ -471,7 +537,7 @@ struct ReplyRow: View {
                 // Block renderer, not inline: replies can carry images, and
                 // the inline path collapses `<img>` to a "[图片]" link.
                 ContentBlocksView(
-                    blocks: HTMLText.blocks(from: TopicDetailViewModel.bodyWithoutQuotePrefix(item)),
+                    blocks: item.contentBlocks,
                     fontSize: settings.bodyFontSize - 1,
                     lineSpacing: settings.bodyLineSpacing * 0.75
                 )
